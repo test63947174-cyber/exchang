@@ -1,33 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Profile — Nexbit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- ✅ Shared CSS -->
+  <link rel="stylesheet" href="shared.css">
+
+  <!-- Page-specific CSS (सिर्फ़ profile के लिए) -->
+  <style>
+    .form-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 20px;
+      padding: 32px 30px;
+      max-width: 700px;
+    }
+
+    .form-group { margin-bottom: 18px; }
+    .form-group label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+      margin-bottom: 7px;
+      text-transform: uppercase;
+    }
+    .form-group input,
+    .form-group select {
+      width: 100%;
+      padding: 13px 16px;
+      background: rgba(5, 10, 25, 0.75);
+      border: 1px solid rgba(0, 240, 255, 0.18);
+      border-radius: 11px;
+      color: var(--text-main);
+      font-size: 0.92rem;
+      font-family: inherit;
+      outline: none;
+      transition: all 0.25s;
+    }
+    .form-group input:focus,
+    .form-group select:focus {
+      border-color: var(--neon-cyan);
+      box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.12);
+    }
+    .form-group input:disabled {
+      background: rgba(5, 10, 25, 0.4);
+      color: var(--text-dim);
+      cursor: not-allowed;
+    }
+    .form-group select { cursor: pointer; }
+    .form-group select option {
+      background: #0a0f24;
+      color: var(--text-main);
+    }
+
+    .avatar-block {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    #bigAvatar {
+      width: 90px; height: 90px;
+      border-radius: 50%;
+      margin: 0 auto 12px;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple));
+      display: grid; place-items: center;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 2.2rem;
+      font-weight: 900;
+      color: #041018;
+    }
+
+    #saveProfileBtn {
+      width: 100%;
+      padding: 15px;
+      margin-top: 12px;
+      border: none;
+      border-radius: 11px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: #041018;
+      cursor: pointer;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 24px rgba(0, 240, 255, 0.4);
+      transition: all 0.3s;
+    }
+    #saveProfileBtn:hover {
+      box-shadow: 0 0 38px rgba(0, 255, 163, 0.7);
+      transform: translateY(-2px);
+    }
+    #saveProfileBtn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    @media (max-width: 700px) {
+      .form-card { padding: 22px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ================= NAVBAR ================= -->
+<nav class="navbar">
+  <div class="nav-left">
+    <button class="hamburger" onclick="toggleSidebar()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <a href="dashboard.html" class="nav-brand">
+      <div class="logo-icon">₿</div>
+      <span class="brand-gradient">NEXBIT</span>
+    </a>
+  </div>
+
+  <div class="nav-actions">
+    <div class="user-chip">
+      <div class="user-avatar" id="userAvatar">U</div>
+      <span id="userName">Trader</span>
+    </div>
+    <button class="btn btn-ghost" onclick="logoutUser()">Logout</button>
+  </div>
+</nav>
+
+<!-- ================= SIDEBAR ================= -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-head">
+    <div class="logo-wrap">
+      <div class="logo-icon">₿</div>
+      <span class="brand-gradient">NEXBIT</span>
+    </div>
+    <button class="sidebar-close" onclick="toggleSidebar()">✕</button>
+  </div>
+
+  <nav class="sidebar-menu">
+    <a href="dashboard.html"  class="menu-item"><span class="mi-icon">🏠</span> Dashboard</a>
+    <a href="market.html"     class="menu-item"><span class="mi-icon">📈</span> Markets</a>
+    <a href="trade.html"      class="menu-item"><span class="mi-icon">💱</span> Trade</a>
+    <a href="wallet.html"     class="menu-item"><span class="mi-icon">💰</span> Wallet</a>
+    <a href="orders.html"     class="menu-item"><span class="mi-icon">📋</span> Orders</a>
+    <a href="list-token.html" class="menu-item"><span class="mi-icon">🚀</span> List Token</a>
+    <a href="profile.html"    class="menu-item active"><span class="mi-icon">👤</span> Profile</a>
+    <a href="settings.html"   class="menu-item"><span class="mi-icon">⚙️</span> Settings</a>
+    <div class="menu-divider"></div>
+    <a href="#" class="menu-item" onclick="logoutUser(event)"><span class="mi-icon">🚪</span> Logout</a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="help-card">
+      <div style="font-size:1.5rem; margin-bottom:6px;">🎧</div>
+      <h5>Need help?</h5>
+      <p>Our support team is online 24/7</p>
+      <a href="#">Contact Support</a>
+    </div>
+  </div>
+</aside>
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<!-- ================= MAIN ================= -->
 <div class="container">
   <div class="page-head">
     <h1>My <span>Profile</span></h1>
     <p>Manage your account information.</p>
   </div>
 
-  <div class="form-card" style="background:var(--bg-card);backdrop-filter:blur(18px);border:1px solid rgba(0,240,255,0.15);border-radius:20px;padding:32px 30px;max-width:700px;">
-    <div style="text-align:center; margin-bottom:24px;">
-      <div id="bigAvatar" style="width:90px;height:90px;border-radius:50%;margin:0 auto 12px;background:linear-gradient(135deg,var(--neon-cyan),var(--neon-purple));display:grid;place-items:center;font-family:'Orbitron',sans-serif;font-size:2.2rem;font-weight:900;color:#041018;">U</div>
-      <button class="btn btn-ghost" style="padding:8px 18px;font-size:0.8rem;">📷 Change Avatar</button>
+  <div class="form-card">
+
+    <div class="avatar-block">
+      <div id="bigAvatar">U</div>
+      <button class="btn btn-ghost" style="padding:8px 18px; font-size:0.8rem;">
+        📷 Change Avatar
+      </button>
     </div>
 
-    <div class="form-group" style="margin-bottom:18px;">
-      <label style="display:block;font-size:0.78rem;font-weight:500;color:var(--text-dim);margin-bottom:7px;text-transform:uppercase;">Full Name</label>
-      <input type="text" id="profileName" style="width:100%;padding:13px 16px;background:rgba(5,10,25,0.75);border:1px solid rgba(0,240,255,0.18);border-radius:11px;color:var(--text-main);font-size:0.92rem;outline:none;" />
+    <div class="form-group">
+      <label for="profileName">Full Name</label>
+      <input type="text" id="profileName" placeholder="Satoshi Nakamoto" />
     </div>
 
-    <div class="form-group" style="margin-bottom:18px;">
-      <label style="display:block;font-size:0.78rem;font-weight:500;color:var(--text-dim);margin-bottom:7px;text-transform:uppercase;">Email (read-only)</label>
-      <input type="email" id="profileEmail" disabled style="width:100%;padding:13px 16px;background:rgba(5,10,25,0.5);border:1px solid rgba(0,240,255,0.1);border-radius:11px;color:var(--text-dim);font-size:0.92rem;outline:none;cursor:not-allowed;" />
+    <div class="form-group">
+      <label for="profileEmail">Email (read-only)</label>
+      <input type="email" id="profileEmail" disabled />
     </div>
 
-    <div class="form-group" style="margin-bottom:18px;">
-      <label style="display:block;font-size:0.78rem;font-weight:500;color:var(--text-dim);margin-bottom:7px;text-transform:uppercase;">Phone Number</label>
-      <input type="tel" id="profilePhone" placeholder="+91 98765 43210" style="width:100%;padding:13px 16px;background:rgba(5,10,25,0.75);border:1px solid rgba(0,240,255,0.18);border-radius:11px;color:var(--text-main);font-size:0.92rem;outline:none;" />
+    <div class="form-group">
+      <label for="profilePhone">Phone Number</label>
+      <input type="tel" id="profilePhone" placeholder="+91 98765 43210" />
     </div>
 
-    <div class="form-group" style="margin-bottom:18px;">
-      <label style="display:block;font-size:0.78rem;font-weight:500;color:var(--text-dim);margin-bottom:7px;text-transform:uppercase;">Country</label>
-      <select id="profileCountry" style="width:100%;padding:13px 16px;background:rgba(5,10,25,0.75);border:1px solid rgba(0,240,255,0.18);border-radius:11px;color:var(--text-main);font-size:0.92rem;outline:none;">
+    <div class="form-group">
+      <label for="profileCountry">Country</label>
+      <select id="profileCountry">
         <option value="IN">🇮🇳 India</option>
         <option value="US">🇺🇸 United States</option>
         <option value="UK">🇬🇧 United Kingdom</option>
@@ -37,8 +208,99 @@
       </select>
     </div>
 
-    <button id="saveProfileBtn" style="width:100%;padding:15px;margin-top:12px;border:none;border-radius:11px;font-family:'Orbitron',sans-serif;font-size:0.95rem;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#041018;cursor:pointer;background:linear-gradient(90deg,var(--neon-cyan),var(--neon-green));box-shadow:0 0 24px rgba(0,240,255,0.4);">
-      Save Changes
-    </button>
+    <button id="saveProfileBtn">Save Changes</button>
   </div>
 </div>
+
+<!-- ================= TOAST ================= -->
+<div class="toast" id="toast">
+  <span class="check">✓</span>
+  <span id="toastMsg">Profile updated!</span>
+</div>
+
+<!-- ================= PROFILE SCRIPT ================= -->
+<script type="module">
+  /* =========================================================
+     Profile Page — Uses shared layout + firebase-config
+     ========================================================= */
+  import { auth, db } from "./firebase-config.js";
+  import { initAuthGuard, showToast } from "./layout.js";
+  import { updateProfile }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { ref, get, update }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  /* ---------- Auth guard + navbar user ---------- */
+  initAuthGuard();
+
+  /* ---------- Load user data when auth ready ---------- */
+  import { onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user) return;
+
+    const name = user.displayName || "Trader";
+    const first = name.split(" ")[0];
+
+    document.getElementById("profileName").value  = name;
+    document.getElementById("profileEmail").value = user.email;
+    document.getElementById("bigAvatar").textContent = first.charAt(0).toUpperCase();
+
+    try {
+      const snap = await get(ref(db, "users/" + user.uid));
+      if (snap.exists()) {
+        const v = snap.val();
+        if (v.phone)   document.getElementById("profilePhone").value   = v.phone;
+        if (v.country) document.getElementById("profileCountry").value = v.country;
+      }
+    } catch (err) {
+      console.warn("DB read failed:", err);
+    }
+  });
+
+  /* ---------- Save profile ---------- */
+  document.getElementById("saveProfileBtn").addEventListener("click", async () => {
+    const user = auth.currentUser;
+    if (!user) { showToast("Please log in.", false); return; }
+
+    const name    = document.getElementById("profileName").value.trim();
+    const phone   = document.getElementById("profilePhone").value.trim();
+    const country = document.getElementById("profileCountry").value;
+
+    if (name.length < 2) {
+      showToast("Please enter a valid name.", false);
+      return;
+    }
+
+    const btn = document.getElementById("saveProfileBtn");
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = "Saving…";
+
+    try {
+      await updateProfile(user, { displayName: name });
+      await update(ref(db, "users/" + user.uid), {
+        fullName: name,
+        phone: phone,
+        country: country,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Update navbar
+      document.getElementById("userName").textContent = name.split(" ")[0];
+      document.getElementById("userAvatar").textContent = name.charAt(0).toUpperCase();
+      document.getElementById("bigAvatar").textContent = name.charAt(0).toUpperCase();
+
+      showToast("✅ Profile updated successfully!", true);
+    } catch (err) {
+      console.error("Update error:", err);
+      showToast("Update failed. Try again.", false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+</script>
+</body>
+</html>
