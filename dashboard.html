@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — Nexbit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ================= RESET & VARS ================= */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-dark: #050814;
+      --bg-mid: #0a0f24;
+      --bg-card: rgba(15, 22, 48, 0.65);
+      --bg-card-solid: #0d142c;
+      --neon-cyan: #00f0ff;
+      --neon-green: #00ffa3;
+      --neon-purple: #7b5cff;
+      --neon-pink: #ff2e93;
+      --text-main: #eaf6ff;
+      --text-dim: #8b9bc0;
+      --border-glow: rgba(0, 240, 255, 0.35);
+      --danger: #ff4d6d;
+      --success: #00ffa3;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Poppins', sans-serif;
+      color: var(--text-main);
+      background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-mid) 100%);
+      background-attachment: fixed;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before, body::after {
+      content: ""; position: fixed; border-radius: 50%;
+      filter: blur(140px); z-index: 0; pointer-events: none;
+    }
+    body::before { width: 500px; height: 500px; background: rgba(0, 240, 255, 0.12); top: -180px; left: -180px; animation: float1 14s ease-in-out infinite; }
+    body::after  { width: 520px; height: 520px; background: rgba(123, 92, 255, 0.12); bottom: -200px; right: -200px; animation: float2 16s ease-in-out infinite; }
+    @keyframes float1 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(80px,60px);} }
+    @keyframes float2 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(-80px,-60px);} }
+
+    /* ================= NAVBAR ================= */
+    .navbar {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 5%;
+      background: rgba(5, 8, 20, 0.78);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid rgba(0, 240, 255, 0.12);
+    }
+
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.3rem; font-weight: 800;
+      letter-spacing: 1.5px;
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 34px; height: 34px;
+      display: grid; place-items: center;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.55);
+      font-size: 16px; color: #041018; font-weight: 800;
+      animation: pulse 3s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 18px rgba(0, 240, 255, 0.55); }
+      50%     { box-shadow: 0 0 30px rgba(0, 255, 163, 0.85); }
+    }
+
+    .brand-gradient {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    .nav-actions { display: flex; align-items: center; gap: 12px; }
+
+    .user-chip {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 14px 6px 6px;
+      background: rgba(0, 240, 255, 0.08);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      border-radius: 50px;
+    }
+
+    .user-avatar {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple));
+      display: grid; place-items: center;
+      font-weight: 700; color: #041018; font-size: 0.85rem;
+    }
+
+    .user-chip span { font-size: 0.85rem; font-weight: 500; }
+
+    .btn {
+      padding: 10px 22px;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      text-decoration: none;
+      border: none;
+      transition: all 0.25s ease;
+      display: inline-block;
+      white-space: nowrap;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-main);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+    }
+    .btn-ghost:hover {
+      border-color: var(--neon-cyan);
+      color: var(--neon-cyan);
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.25);
+    }
+
+    .btn-primary {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      color: #041018;
+      box-shadow: 0 0 22px rgba(0, 240, 255, 0.35);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 0 34px rgba(0, 255, 163, 0.6);
+      transform: translateY(-2px);
+    }
+
+    .mobile-toggle {
+      display: none; background: none; border: none;
+      color: var(--text-main); font-size: 1.5rem; cursor: pointer;
+    }
+
+    /* ================= CONTAINER ================= */
+    .container {
+      position: relative; z-index: 1;
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 30px 5% 60px;
+    }
+
+    /* ================= WELCOME HEADER ================= */
+    .welcome-row {
+      display: flex; justify-content: space-between; align-items: center;
+      flex-wrap: wrap; gap: 16px;
+      margin-bottom: 26px;
+    }
+
+    .welcome-row h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.4rem, 2.8vw, 2rem);
+      font-weight: 800;
+      letter-spacing: 0.5px;
+    }
+
+    .welcome-row h1 span {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    .welcome-row p {
+      color: var(--text-dim);
+      font-size: 0.88rem;
+      margin-top: 4px;
+      font-weight: 300;
+    }
+
+    /* ================= BALANCE CARD ================= */
+    .balance-card {
+      position: relative;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.12), rgba(123, 92, 255, 0.12));
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      border-radius: 22px;
+      padding: 30px 32px;
+      margin-bottom: 30px;
+      overflow: hidden;
+      box-shadow: 0 0 50px rgba(0, 240, 255, 0.15);
+    }
+
+    .balance-card::before {
+      content: "";
+      position: absolute;
+      top: -50%; right: -20%;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(0, 255, 163, 0.15), transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .balance-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 30px;
+      align-items: center;
+      position: relative;
+    }
+
+    .balance-label {
+      font-size: 0.75rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+
+    .balance-amount {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 900;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+    }
+
+    .balance-change {
+      color: var(--neon-green);
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+
+    .balance-actions {
+      display: flex; gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .balance-actions .btn {
+      padding: 11px 20px;
+      font-size: 0.82rem;
+    }
+
+    /* ================= SECTION HEADS ================= */
+    .section-head {
+      display: flex; justify-content: space-between; align-items: center;
+      margin: 40px 0 20px;
+      flex-wrap: wrap; gap: 12px;
+    }
+
+    .section-head h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.1rem, 2vw, 1.4rem);
+      font-weight: 800;
+      letter-spacing: 0.8px;
+    }
+
+    .section-head a {
+      color: var(--neon-cyan);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .section-head a:hover { color: var(--neon-green); }
+
+    /* ================= COIN CARDS GRID ================= */
+    .coins-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 18px;
+    }
+
+    .coin-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 18px;
+      padding: 22px 20px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+
+    .coin-card::before {
+      content: "";
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .coin-card:hover {
+      transform: translateY(-6px);
+      border-color: rgba(0, 240, 255, 0.5);
+      box-shadow: 0 20px 40px rgba(0, 240, 255, 0.15);
+    }
+    .coin-card:hover::before { opacity: 1; }
+
+    .coin-card .top {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .coin-icon {
+      width: 42px; height: 42px;
+      border-radius: 50%;
+      display: grid; place-items: center;
+      font-size: 18px; font-weight: 800;
+      color: #041018;
+      flex-shrink: 0;
+    }
+
+    .coin-icon.btc { background: linear-gradient(135deg, #f7931a, #ffb347); }
+    .coin-icon.eth { background: linear-gradient(135deg, #627eea, #8ba7ff); }
+    .coin-icon.sol { background: linear-gradient(135deg, #9945ff, #14f195); }
+    .coin-icon.bnb { background: linear-gradient(135deg, #f0b90b, #f8d33a); }
+    .coin-icon.xrp { background: linear-gradient(135deg, #23292f, #4a5560); color: #fff; }
+    .coin-icon.doge { background: linear-gradient(135deg, #c2a633, #e5cf6b); }
+    .coin-icon.rnd { background: linear-gradient(135deg, var(--neon-pink), var(--neon-purple)); color: #fff; box-shadow: 0 0 14px rgba(255, 46, 147, 0.6); }
+
+    .coin-card .coin-title { font-size: 0.95rem; font-weight: 600; }
+    .coin-card .coin-sym { font-size: 0.75rem; color: var(--text-dim); }
+
+    .coin-card .price-row {
+      display: flex; justify-content: space-between; align-items: flex-end;
+      gap: 8px;
+    }
+
+    .coin-card .price {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .coin-card .change {
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    .change.up { color: var(--neon-green); background: rgba(0, 255, 163, 0.1); }
+    .change.down { color: var(--danger); background: rgba(255, 77, 109, 0.1); }
+
+    /* ================= RND FEATURED CARD ================= */
+    .rnd-featured {
+      position: relative;
+      margin-top: 40px;
+      background: linear-gradient(135deg, rgba(255, 46, 147, 0.15), rgba(123, 92, 255, 0.15));
+      border: 1px solid rgba(255, 46, 147, 0.4);
+      border-radius: 22px;
+      padding: 32px 30px;
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 30px;
+      align-items: center;
+      overflow: hidden;
+      box-shadow: 0 0 50px rgba(255, 46, 147, 0.15);
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.3s;
+    }
+
+    .rnd-featured:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 0 70px rgba(255, 46, 147, 0.3);
+      border-color: rgba(255, 46, 147, 0.7);
+    }
+
+    .rnd-featured::before {
+      content: "";
+      position: absolute;
+      top: -60%; left: -10%;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(255, 46, 147, 0.25), transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .rnd-badge {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 50px;
+      background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple));
+      color: #fff;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+      box-shadow: 0 0 18px rgba(255, 46, 147, 0.5);
+    }
+
+    .rnd-featured h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.4rem, 3vw, 2rem);
+      font-weight: 900;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+
+    .rnd-featured h2 .grad {
+      background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple), var(--neon-cyan));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    .rnd-featured p {
+      color: var(--text-dim);
+      font-size: 0.9rem;
+      line-height: 1.65;
+      font-weight: 300;
+      margin-bottom: 18px;
+      max-width: 500px;
+    }
+
+    .rnd-stats {
+      display: flex; gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .rnd-stat-label {
+      font-size: 0.72rem;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .rnd-stat-value {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--neon-green);
+    }
+
+    .rnd-right {
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+
+    .rnd-logo {
+      width: 100px; height: 100px;
+      margin: 0 auto 16px;
+      border-radius: 50%;
+      display: grid; place-items: center;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 2.4rem;
+      font-weight: 900;
+      color: #fff;
+      background: linear-gradient(135deg, var(--neon-pink), var(--neon-purple));
+      box-shadow: 0 0 40px rgba(255, 46, 147, 0.7);
+      animation: floatRnd 3s ease-in-out infinite;
+    }
+
+    @keyframes floatRnd {
+      0%,100% { transform: translateY(0); }
+      50%     { transform: translateY(-8px); }
+    }
+
+    /* ================= QUICK ACTIONS ================= */
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-top: 40px;
+    }
+
+    .quick-action {
+      display: flex; align-items: center; gap: 14px;
+      padding: 18px 20px;
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 14px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.25s;
+    }
+    .quick-action:hover {
+      border-color: rgba(0, 255, 163, 0.5);
+      box-shadow: 0 0 25px rgba(0, 255, 163, 0.15);
+      transform: translateY(-2px);
+    }
+
+    .qa-icon {
+      width: 42px; height: 42px;
+      display: grid; place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(123, 92, 255, 0.15));
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .quick-action h4 { font-size: 0.9rem; font-weight: 600; }
+    .quick-action p  { font-size: 0.75rem; color: var(--text-dim); }
+
+    /* ================= TRANSACTIONS ================= */
+    .tx-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+
+    .tx-table thead { background: rgba(0, 240, 255, 0.06); }
+
+    .tx-table th, .tx-table td {
+      padding: 14px 20px;
+      text-align: left;
+      font-size: 0.87rem;
+    }
+
+    .tx-table th {
+      color: var(--neon-cyan);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+
+    .tx-table td {
+      border-top: 1px solid rgba(0, 240, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .tx-table tr:hover td { background: rgba(0, 240, 255, 0.04); }
+
+    .tx-type {
+      display: inline-block;
+      padding: 3px 12px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .tx-type.buy  { color: var(--neon-green); background: rgba(0, 255, 163, 0.1); }
+    .tx-type.sell { color: var(--danger); background: rgba(255, 77, 109, 0.1); }
+    .tx-type.dep  { color: var(--neon-cyan); background: rgba(0, 240, 255, 0.1); }
+
+    /* ================= TOAST ================= */
+    .toast {
+      position: fixed; top: 26px; left: 50%;
+      transform: translateX(-50%) translateY(-140px);
+      background: rgba(5, 15, 30, 0.96);
+      border: 1px solid var(--success);
+      border-radius: 12px;
+      padding: 14px 22px;
+      color: var(--text-main);
+      font-size: 0.9rem;
+      box-shadow: 0 0 30px rgba(0, 255, 163, 0.4);
+      display: flex; align-items: center; gap: 10px;
+      z-index: 999; opacity: 0;
+      transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      max-width: 90vw;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .toast .check {
+      width: 22px; height: 22px;
+      display: grid; place-items: center;
+      border-radius: 50%; background: var(--success);
+      color: #041018; font-weight: 800; font-size: 13px; flex-shrink: 0;
+    }
+
+    /* ================= RESPONSIVE ================= */
+    @media (max-width: 900px) {
+      .balance-grid { grid-template-columns: 1fr; }
+      .balance-actions { justify-content: flex-start; }
+      .rnd-featured { grid-template-columns: 1fr; text-align: center; }
+      .rnd-featured p { margin-left: auto; margin-right: auto; }
+      .rnd-stats { justify-content: center; }
+    }
+
+    @media (max-width: 700px) {
+      .navbar { padding: 12px 4%; }
+      .brand-gradient { font-size: 1.1rem; }
+      .user-chip span { display: none; }
+      .container { padding: 20px 4% 40px; }
+      .balance-card { padding: 22px 22px; }
+      .tx-table th:nth-child(1), .tx-table td:nth-child(1) { display: none; }
+      .tx-table th, .tx-table td { padding: 12px 12px; font-size: 0.8rem; }
+    }
+
+    @media (max-width: 480px) {
+      .coins-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
+      .coin-card { padding: 16px 14px; }
+      .coin-card .price { font-size: 1rem; }
+      .coin-icon { width: 34px; height: 34px; font-size: 15px; }
+      .quick-actions { grid-template-columns: 1fr; }
+      .rnd-logo { width: 80px; height: 80px; font-size: 2rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ================= NAVBAR ================= -->
+<nav class="navbar">
+  <a href="index.html" class="nav-brand">
+    <div class="logo-icon">₿</div>
+    <span class="brand-gradient">NEXBIT</span>
+  </a>
+
+  <div class="nav-actions">
+    <div class="user-chip">
+      <div class="user-avatar" id="userAvatar">U</div>
+      <span id="userName">Trader</span>
+    </div>
+    <button class="btn btn-ghost" id="logoutBtn">Logout</button>
+    <button class="mobile-toggle" onclick="toggleMobileMenu()">☰</button>
+  </div>
+</nav>
+
+<!-- ================= MAIN CONTAINER ================= -->
+<div class="container">
+
+  <!-- Welcome -->
+  <div class="welcome-row">
+    <div>
+      <h1>Welcome back, <span id="welcomeName">Trader</span> 👋</h1>
+      <p>Here's your crypto portfolio overview. Click any coin to start trading.</p>
+    </div>
+  </div>
+
+  <!-- Balance Card -->
+  <div class="balance-card">
+    <div class="balance-grid">
+      <div>
+        <div class="balance-label">Total Portfolio Value</div>
+        <div class="balance-amount" id="balanceAmount">$0.00</div>
+        <div class="balance-change" id="balanceChange">▲ $0.00 (0.00%) today</div>
+      </div>
+      <div class="balance-actions">
+        <a href="trade.html" class="btn btn-primary">💰 Deposit</a>
+        <a href="trade.html" class="btn btn-ghost">💸 Withdraw</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= COIN CARDS ================= -->
+  <div class="section-head">
+    <h2>Top Cryptocurrencies</h2>
+    <a href="market.html">View all markets →</a>
+  </div>
+
+  <div class="coins-grid" id="coinsGrid">
+    <!-- JS fills this -->
+  </div>
+
+  <!-- ================= RND FEATURED ================= -->
+  <a href="trade.html?coin=RND" class="rnd-featured">
+    <div>
+      <span class="rnd-badge">🔥 New Listing — Featured Token</span>
+      <h2><span class="grad">RND Token</span> is Now Live!</h2>
+      <p>
+        RND (Random Network Dollar) — Nexbit पर नया listed token। Innovative DeFi protocol,
+        community-driven governance और high-yield staking opportunities के साथ। अभी trade करें
+        और early-adopter rewards पाएँ।
+      </p>
+      <div class="rnd-stats">
+        <div>
+          <div class="rnd-stat-label">Price</div>
+          <div class="rnd-stat-value">$1.247</div>
+        </div>
+        <div>
+          <div class="rnd-stat-label">24h Change</div>
+          <div class="rnd-stat-value">+18.42%</div>
+        </div>
+        <div>
+          <div class="rnd-stat-label">Market Cap</div>
+          <div class="rnd-stat-value">$124.7M</div>
+        </div>
+        <div>
+          <div class="rnd-stat-label">Volume</div>
+          <div class="rnd-stat-value">$8.3M</div>
+        </div>
+      </div>
+    </div>
+    <div class="rnd-right">
+      <div class="rnd-logo">R</div>
+      <div style="font-family:'Orbitron',sans-serif; font-size:1.3rem; font-weight:800; letter-spacing:1px;">RND</div>
+      <div style="font-size:0.8rem; color:var(--text-dim); margin-top:4px;">Random Network Dollar</div>
+    </div>
+  </a>
+
+  <!-- ================= QUICK ACTIONS ================= -->
+  <div class="section-head">
+    <h2>Quick Actions</h2>
+  </div>
+
+  <div class="quick-actions">
+    <a href="trade.html?action=buy" class="quick-action">
+      <div class="qa-icon">💰</div>
+      <div>
+        <h4>Buy Crypto</h4>
+        <p>Instant purchase</p>
+      </div>
+    </a>
+    <a href="trade.html?action=sell" class="quick-action">
+      <div class="qa-icon">💸</div>
+      <div>
+        <h4>Sell Crypto</h4>
+        <p>Cash out fast</p>
+      </div>
+    </a>
+    <a href="list-token.html" class="quick-action">
+      <div class="qa-icon">🚀</div>
+      <div>
+        <h4>List Token</h4>
+        <p>Launch your coin</p>
+      </div>
+    </a>
+    <a href="profile.html" class="quick-action">
+      <div class="qa-icon">👤</div>
+      <div>
+        <h4>My Profile</h4>
+        <p>Account settings</p>
+      </div>
+    </a>
+  </div>
+
+  <!-- ================= RECENT TRANSACTIONS ================= -->
+  <div class="section-head">
+    <h2>Recent Activity</h2>
+    <a href="#">View all →</a>
+  </div>
+
+  <div style="overflow-x:auto;">
+    <table class="tx-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Asset</th>
+          <th>Amount</th>
+          <th>Value</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="txBody">
+        <!-- JS fills this -->
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- ================= TOAST ================= -->
+<div class="toast" id="toast">
+  <span class="check">✓</span>
+  <span id="toastMsg">Welcome!</span>
+</div>
+
+<!-- ================= DASHBOARD SCRIPT ================= -->
+<script type="module" src="dashboard.js"></script>
+</body>
+</html>
