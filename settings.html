@@ -1,0 +1,38 @@
+<div class="container">
+  <div class="page-head">
+    <h1>Account <span>Settings</span></h1>
+    <p>Security, notifications and preferences.</p>
+  </div>
+
+  <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:18px;">
+
+    <div style="background:var(--bg-card);backdrop-filter:blur(18px);border:1px solid rgba(0,240,255,0.15);border-radius:18px;padding:26px;">
+      <div style="font-size:1.6rem; margin-bottom:10px;">🔐</div>
+      <h3 style="font-family:'Orbitron',sans-serif; font-size:1rem; margin-bottom:8px;">Two-Factor Auth</h3>
+      <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:14px;line-height:1.6;">Add an extra layer of security to your account.</p>
+      <button class="btn btn-primary" onclick="showToast('2FA setup opening…')">Enable 2FA</button>
+    </div>
+
+    <div style="background:var(--bg-card);backdrop-filter:blur(18px);border:1px solid rgba(0,240,255,0.15);border-radius:18px;padding:26px;">
+      <div style="font-size:1.6rem; margin-bottom:10px;">🔔</div>
+      <h3 style="font-family:'Orbitron',sans-serif; font-size:1rem; margin-bottom:8px;">Notifications</h3>
+      <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:14px;line-height:1.6;">Price alerts, order fills, and news updates.</p>
+      <button class="btn btn-ghost" onclick="showToast('Notification settings')">Manage</button>
+    </div>
+
+    <div style="background:var(--bg-card);backdrop-filter:blur(18px);border:1px solid rgba(0,240,255,0.15);border-radius:18px;padding:26px;">
+      <div style="font-size:1.6rem; margin-bottom:10px;">🔑</div>
+      <h3 style="font-family:'Orbitron',sans-serif; font-size:1rem; margin-bottom:8px;">API Keys</h3>
+      <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:14px;line-height:1.6;">For algorithmic trading and bots.</p>
+      <button class="btn btn-ghost" onclick="showToast('API keys panel')">Manage</button>
+    </div>
+
+    <div style="background:var(--bg-card);backdrop-filter:blur(18px);border:1px solid rgba(255,77,109,0.3);border-radius:18px;padding:26px;">
+      <div style="font-size:1.6rem; margin-bottom:10px;">⚠️</div>
+      <h3 style="font-family:'Orbitron',sans-serif; font-size:1rem; margin-bottom:8px; color:var(--danger);">Danger Zone</h3>
+      <p style="color:var(--text-dim);font-size:0.85rem;margin-bottom:14px;line-height:1.6;">Delete your account permanently. This cannot be undone.</p>
+      <button class="btn btn-ghost" style="border-color:var(--danger); color:var(--danger);" onclick="if(confirm('Are you sure? This is permanent.')) showToast('Account deletion requires email confirmation', false);">Delete Account</button>
+    </div>
+
+  </div>
+</div>
