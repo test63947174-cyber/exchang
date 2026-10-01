@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Log In — Nexbit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Poppins:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* same base styling as signup.html — for brevity I include the full CSS again */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg-dark: #050814;
+      --bg-mid: #0a0f24;
+      --bg-card: rgba(15, 22, 48, 0.65);
+      --neon-cyan: #00f0ff;
+      --neon-green: #00ffa3;
+      --neon-purple: #7b5cff;
+      --text-main: #eaf6ff;
+      --text-dim: #8b9bc0;
+      --border-glow: rgba(0, 240, 255, 0.35);
+      --danger: #ff4d6d;
+      --success: #00ffa3;
+    }
+    body {
+      font-family: 'Poppins', sans-serif;
+      color: var(--text-main);
+      background: radial-gradient(circle at 15% 20%, #0d1b3a 0%, transparent 45%),
+                  radial-gradient(circle at 85% 80%, #1a0b3d 0%, transparent 45%),
+                  linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-mid) 100%);
+      background-attachment: fixed;
+      display: flex; justify-content: center; align-items: center;
+      min-height: 100vh; padding: 24px 16px;
+    }
+    body::before, body::after {
+      content: ""; position: fixed; border-radius: 50%;
+      filter: blur(120px); z-index: 0; pointer-events: none;
+    }
+    body::before { width: 380px; height: 380px; background: rgba(0, 240, 255, 0.18); top: -120px; left: -120px; animation: float1 12s ease-in-out infinite; }
+    body::after { width: 420px; height: 420px; background: rgba(123, 92, 255, 0.18); bottom: -140px; right: -140px; animation: float2 14s ease-in-out infinite; }
+    @keyframes float1 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(60px,40px);} }
+    @keyframes float2 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(-60px,-40px);} }
+
+    .login-card {
+      position: relative; z-index: 1;
+      width: 100%; max-width: 440px;
+      background: var(--bg-card);
+      backdrop-filter: blur(22px);
+      -webkit-backdrop-filter: blur(22px);
+      border: 1px solid var(--border-glow);
+      border-radius: 22px;
+      padding: 40px 32px 34px;
+      box-shadow: 0 0 40px rgba(0, 240, 255, 0.12), 0 0 80px rgba(123, 92, 255, 0.08);
+      animation: cardIn 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    @keyframes cardIn { from { opacity: 0; transform: translateY(30px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+    .brand { text-align: center; margin-bottom: 26px; }
+    .logo-wrap { display: inline-flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .logo-icon {
+      width: 42px; height: 42px; display: grid; place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 22px rgba(0, 240, 255, 0.55);
+      font-size: 20px; color: #041018; font-weight: 800;
+      animation: pulse 3s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { box-shadow: 0 0 22px rgba(0, 240, 255, 0.55); } 50% { box-shadow: 0 0 34px rgba(0, 255, 163, 0.85); } }
+
+    .brand-name {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 2rem; font-weight: 800; letter-spacing: 2px;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .tagline { font-size: 0.82rem; color: var(--text-dim); letter-spacing: 1.5px; text-transform: uppercase; font-weight: 300; }
+    .divider { height: 1px; background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent); opacity: 0.4; margin: 20px 0 24px; }
+
+    .form-group { margin-bottom: 18px; }
+    .form-group label {
+      display: block; font-size: 0.78rem; font-weight: 500;
+      letter-spacing: 0.6px; color: var(--text-dim);
+      margin-bottom: 7px; text-transform: uppercase;
+    }
+    .input-wrap { position: relative; display: flex; align-items: center; }
+    .input-icon { position: absolute; left: 14px; font-size: 15px; color: var(--neon-cyan); opacity: 0.8; pointer-events: none; }
+    .form-group input {
+      width: 100%; padding: 13px 44px 13px 42px;
+      background: rgba(5, 10, 25, 0.75);
+      border: 1px solid rgba(0, 240, 255, 0.18);
+      border-radius: 11px; color: var(--text-main);
+      font-size: 0.95rem; font-family: inherit;
+      transition: all 0.25s; outline: none;
+    }
+    .form-group input::placeholder { color: #4a5a7d; }
+    .form-group input:focus {
+      border-color: var(--neon-cyan);
+      box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.12), 0 0 18px rgba(0, 240, 255, 0.25);
+      background: rgba(5, 10, 25, 0.95);
+    }
+    .toggle-pass {
+      position: absolute; right: 12px;
+      background: none; border: none; cursor: pointer;
+      font-size: 16px; color: var(--text-dim); padding: 4px; line-height: 1;
+    }
+    .toggle-pass:hover { color: var(--neon-cyan); }
+
+    .error-msg { display: none; font-size: 0.75rem; color: var(--danger); margin-top: 6px; padding-left: 4px; }
+    .error-msg.show { display: block; }
+
+    .btn-submit {
+      width: 100%; padding: 14px; margin-top: 10px;
+      border: none; border-radius: 11px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 0.95rem; font-weight: 700;
+      letter-spacing: 1.5px; text-transform: uppercase;
+      color: #041018; cursor: pointer;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 24px rgba(0, 240, 255, 0.4);
+      transition: all 0.3s;
+    }
+    .btn-submit:hover:not(:disabled) { box-shadow: 0 0 38px rgba(0, 255, 163, 0.65); transform: translateY(-2px); }
+    .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    .forgot-link { text-align: right; margin-top: 12px; font-size: 0.82rem; }
+    .forgot-link a { color: var(--neon-cyan); text-decoration: none; cursor: pointer; }
+    .forgot-link a:hover { color: var(--neon-green); }
+
+    .signup-link { text-align: center; margin-top: 22px; font-size: 0.86rem; color: var(--text-dim); }
+    .signup-link a { color: var(--neon-cyan); text-decoration: none; font-weight: 500; }
+    .signup-link a:hover { color: var(--neon-green); }
+
+    .toast {
+      position: fixed; top: 26px; left: 50%;
+      transform: translateX(-50%) translateY(-120px);
+      background: rgba(5, 15, 30, 0.95);
+      border: 1px solid var(--success);
+      border-radius: 12px; padding: 14px 22px;
+      color: var(--text-main); font-size: 0.9rem;
+      box-shadow: 0 0 30px rgba(0, 255, 163, 0.4);
+      display: flex; align-items: center; gap: 10px;
+      z-index: 999; opacity: 0;
+      transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .toast .check {
+      width: 22px; height: 22px; display: grid; place-items: center;
+      border-radius: 50%; background: var(--success);
+      color: #041018; font-weight: 800; font-size: 13px;
+    }
+
+    @media (max-width: 480px) {
+      .login-card { padding: 30px 22px 26px; border-radius: 18px; }
+      .brand-name { font-size: 1.6rem; }
+      .tagline { font-size: 0.7rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="toast" id="toast">
+    <span class="check">✓</span>
+    <span id="toastMsg">Logged in successfully!</span>
+  </div>
+
+  <div class="login-card">
+    <div class="brand">
+      <div class="logo-wrap">
+        <div class="logo-icon">₿</div>
+        <span class="brand-name">NEXBIT</span>
+      </div>
+      <p class="tagline">Your Gateway to Crypto Trading</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <form id="loginForm" novalidate>
+      <div class="form-group">
+        <label for="email">Email Address</label>
+        <div class="input-wrap">
+          <span class="input-icon">✉</span>
+          <input type="email" id="email" placeholder="you@nexbit.com" autocomplete="email" required />
+        </div>
+        <p class="error-msg" id="emailError">Please enter a valid email.</p>
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <div class="input-wrap">
+          <span class="input-icon">🔒</span>
+          <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" required />
+          <button type="button" class="toggle-pass" id="togglePass">👁</button>
+        </div>
+        <p class="error-msg" id="passError">Password is required.</p>
+      </div>
+
+      <button type="submit" class="btn-submit" id="submitBtn">Log In</button>
+
+      <p class="forgot-link">
+        <a id="forgotLink">Forgot Password?</a>
+      </p>
+    </form>
+
+    <p class="signup-link">
+      Don't have an account? <a href="signup.html">Sign Up</a>
+    </p>
+  </div>
+
+  <!-- ✅ login.js (matching HTML file name) -->
+  <script type="module" src="login.js"></script>
+</body>
+</html>

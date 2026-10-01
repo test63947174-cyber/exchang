@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nexbit — Your Gateway to Crypto Trading</title>
+  <meta name="description" content="Buy, sell & list all cryptocurrencies on Nexbit — the next-gen crypto exchange." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ================= RESET & VARIABLES ================= */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg-dark: #050814;
+      --bg-mid: #0a0f24;
+      --bg-card: rgba(15, 22, 48, 0.65);
+      --neon-cyan: #00f0ff;
+      --neon-green: #00ffa3;
+      --neon-purple: #7b5cff;
+      --text-main: #eaf6ff;
+      --text-dim: #8b9bc0;
+      --border-glow: rgba(0, 240, 255, 0.35);
+      --danger: #ff4d6d;
+      --success: #00ffa3;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Poppins', sans-serif;
+      color: var(--text-main);
+      background: linear-gradient(135deg, var(--bg-dark) 0%, var(--bg-mid) 100%);
+      background-attachment: fixed;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    body::before, body::after {
+      content: "";
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(140px);
+      z-index: 0;
+      pointer-events: none;
+    }
+    body::before {
+      width: 500px; height: 500px;
+      background: rgba(0, 240, 255, 0.15);
+      top: -180px; left: -180px;
+      animation: float1 14s ease-in-out infinite;
+    }
+    body::after {
+      width: 520px; height: 520px;
+      background: rgba(123, 92, 255, 0.15);
+      bottom: -200px; right: -200px;
+      animation: float2 16s ease-in-out infinite;
+    }
+    @keyframes float1 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(80px,60px);} }
+    @keyframes float2 { 0%,100%{transform:translate(0,0);} 50%{transform:translate(-80px,-60px);} }
+
+    /* ================= NAVBAR ================= */
+    .navbar {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 16px 5%;
+      background: rgba(5, 8, 20, 0.75);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid rgba(0, 240, 255, 0.12);
+    }
+
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.4rem; font-weight: 800;
+      letter-spacing: 1.5px;
+      text-decoration: none;
+    }
+
+    .logo-icon {
+      width: 36px; height: 36px;
+      display: grid; place-items: center;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.55);
+      font-size: 17px; color: #041018; font-weight: 800;
+      animation: pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%,100% { box-shadow: 0 0 18px rgba(0, 240, 255, 0.55); }
+      50%     { box-shadow: 0 0 30px rgba(0, 255, 163, 0.85); }
+    }
+
+    .brand-gradient {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    .nav-links {
+      display: flex; align-items: center; gap: 26px;
+      list-style: none;
+    }
+
+    .nav-links a {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: var(--neon-cyan); }
+
+    .nav-auth { display: flex; align-items: center; gap: 12px; }
+
+    .btn {
+      padding: 10px 22px;
+      border-radius: 10px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.87rem;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      cursor: pointer;
+      text-decoration: none;
+      border: none;
+      transition: all 0.25s ease;
+      white-space: nowrap;
+      display: inline-block;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-main);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+    }
+    .btn-ghost:hover {
+      border-color: var(--neon-cyan);
+      color: var(--neon-cyan);
+      box-shadow: 0 0 18px rgba(0, 240, 255, 0.25);
+    }
+
+    .btn-primary {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      color: #041018;
+      box-shadow: 0 0 22px rgba(0, 240, 255, 0.35);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 0 34px rgba(0, 255, 163, 0.6);
+      transform: translateY(-2px);
+    }
+
+    .mobile-toggle {
+      display: none;
+      background: none; border: none;
+      color: var(--text-main); font-size: 1.5rem; cursor: pointer;
+    }
+
+    /* ================= HERO ================= */
+    .hero {
+      position: relative; z-index: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 80px 5% 60px;
+      text-align: center;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      padding: 7px 18px;
+      border-radius: 50px;
+      background: rgba(0, 240, 255, 0.1);
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      color: var(--neon-cyan);
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      margin-bottom: 24px;
+    }
+
+    .hero h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(2rem, 5vw, 3.8rem);
+      font-weight: 900;
+      line-height: 1.15;
+      margin-bottom: 22px;
+      letter-spacing: 1px;
+    }
+
+    .hero h1 .accent {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    .hero p.lead {
+      font-size: clamp(0.95rem, 1.7vw, 1.15rem);
+      color: var(--text-dim);
+      max-width: 720px;
+      margin: 0 auto 36px;
+      line-height: 1.7;
+      font-weight: 300;
+    }
+
+    .hero-cta {
+      display: flex; justify-content: center; gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+
+    .hero-cta .btn { padding: 14px 32px; font-size: 0.95rem; }
+
+    /* ================= TICKER ================= */
+    .ticker-wrap {
+      position: relative; z-index: 1;
+      max-width: 1200px;
+      margin: 0 auto 50px;
+      padding: 0 5%;
+      overflow: hidden;
+    }
+
+    .ticker {
+      display: flex; gap: 14px;
+      animation: tickerScroll 30s linear infinite;
+      width: max-content;
+    }
+
+    @keyframes tickerScroll {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+
+    .ticker-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 18px;
+      background: rgba(15, 22, 48, 0.7);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 50px;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+
+    .ticker-item .sym { font-weight: 600; color: var(--neon-cyan); }
+    .ticker-item .price { color: var(--text-main); }
+    .ticker-item .up { color: var(--neon-green); font-size: 0.78rem; }
+    .ticker-item .down { color: var(--danger); font-size: 0.78rem; }
+
+    /* ================= SECTIONS ================= */
+    section.features, section.market, section.steps, section.cta {
+      position: relative; z-index: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 70px 5%;
+    }
+
+    .section-head {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .section-head h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.5rem, 3.5vw, 2.4rem);
+      font-weight: 800;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+
+    .section-head p {
+      color: var(--text-dim);
+      font-size: 0.95rem;
+      max-width: 620px;
+      margin: 0 auto;
+      font-weight: 300;
+      line-height: 1.6;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+      gap: 22px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 18px;
+      padding: 28px 24px;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card::before {
+      content: "";
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-6px);
+      border-color: rgba(0, 240, 255, 0.5);
+      box-shadow: 0 20px 40px rgba(0, 240, 255, 0.12),
+                  0 0 40px rgba(123, 92, 255, 0.08);
+    }
+
+    .feature-card:hover::before { opacity: 1; }
+
+    .feature-icon {
+      width: 52px; height: 52px;
+      display: grid; place-items: center;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.15), rgba(123, 92, 255, 0.15));
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      font-size: 24px;
+      margin-bottom: 18px;
+    }
+
+    .feature-card h3 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    .feature-card p {
+      color: var(--text-dim);
+      font-size: 0.87rem;
+      line-height: 1.65;
+      font-weight: 300;
+    }
+
+    /* Market */
+    .market-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+
+    .market-table thead {
+      background: rgba(0, 240, 255, 0.06);
+    }
+
+    .market-table th, .market-table td {
+      padding: 16px 20px;
+      text-align: left;
+      font-size: 0.9rem;
+    }
+
+    .market-table th {
+      color: var(--neon-cyan);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+
+    .market-table td {
+      border-top: 1px solid rgba(0, 240, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .market-table tr:hover td {
+      background: rgba(0, 240, 255, 0.04);
+    }
+
+    .coin-cell {
+      display: flex; align-items: center; gap: 12px;
+      font-weight: 600;
+    }
+
+    .coin-icon {
+      width: 34px; height: 34px;
+      border-radius: 50%;
+      display: grid; place-items: center;
+      font-size: 15px; font-weight: 800;
+      color: #041018;
+    }
+
+    .coin-icon.btc { background: linear-gradient(135deg, #f7931a, #ffb347); }
+    .coin-icon.eth { background: linear-gradient(135deg, #627eea, #8ba7ff); }
+    .coin-icon.sol { background: linear-gradient(135deg, #9945ff, #14f195); }
+    .coin-icon.bnb { background: linear-gradient(135deg, #f0b90b, #f8d33a); }
+    .coin-icon.xrp { background: linear-gradient(135deg, #23292f, #4a5560); color: #fff; }
+
+    .coin-sym { color: var(--text-dim); font-size: 0.78rem; font-weight: 400; }
+
+    .price-up   { color: var(--neon-green); font-weight: 600; }
+    .price-down { color: var(--danger); font-weight: 600; }
+
+    .btn-trade {
+      padding: 7px 18px;
+      font-size: 0.78rem;
+      border-radius: 8px;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      color: #041018;
+      border: none;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: all 0.25s;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-trade:hover {
+      box-shadow: 0 0 22px rgba(0, 255, 163, 0.6);
+      transform: translateY(-1px);
+    }
+
+    /* Steps */
+    .steps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 22px;
+    }
+
+    .step-card {
+      text-align: center;
+      padding: 32px 22px;
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(0, 240, 255, 0.15);
+      border-radius: 18px;
+      transition: all 0.3s;
+    }
+    .step-card:hover {
+      transform: translateY(-6px);
+      border-color: rgba(0, 255, 163, 0.5);
+      box-shadow: 0 20px 40px rgba(0, 255, 163, 0.1);
+    }
+
+    .step-num {
+      width: 52px; height: 52px;
+      margin: 0 auto 16px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.2rem; font-weight: 800;
+      color: #041018;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 22px rgba(0, 240, 255, 0.5);
+    }
+
+    .step-card h3 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1rem; font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    .step-card p {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      line-height: 1.6;
+      font-weight: 300;
+    }
+
+    /* CTA */
+    .cta-box {
+      text-align: center;
+      padding: 60px 30px;
+      background: linear-gradient(135deg, rgba(0, 240, 255, 0.08), rgba(123, 92, 255, 0.08));
+      border: 1px solid rgba(0, 240, 255, 0.3);
+      border-radius: 24px;
+      box-shadow: 0 0 60px rgba(0, 240, 255, 0.1);
+    }
+
+    .cta-box h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.4rem, 3vw, 2.2rem);
+      font-weight: 800;
+      margin-bottom: 14px;
+      letter-spacing: 1px;
+    }
+
+    .cta-box p {
+      color: var(--text-dim);
+      margin-bottom: 28px;
+      font-weight: 300;
+    }
+
+    /* Footer */
+    footer {
+      position: relative; z-index: 1;
+      border-top: 1px solid rgba(0, 240, 255, 0.12);
+      padding: 32px 5%;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.83rem;
+      margin-top: 60px;
+    }
+
+    footer a { color: var(--neon-cyan); text-decoration: none; }
+    footer a:hover { color: var(--neon-green); }
+
+    /* ================= RESPONSIVE ================= */
+    @media (max-width: 900px) {
+      .nav-links { display: none; }
+      .mobile-toggle { display: block; }
+      .nav-links.mobile-open {
+        display: flex;
+        flex-direction: column;
+        position: absolute;
+        top: 68px; left: 0; right: 0;
+        background: rgba(5, 8, 20, 0.98);
+        backdrop-filter: blur(18px);
+        padding: 22px;
+        gap: 18px;
+        border-bottom: 1px solid rgba(0, 240, 255, 0.2);
+      }
+    }
+
+    @media (max-width: 600px) {
+      .navbar { padding: 14px 4%; }
+      .brand-gradient, .nav-brand { font-size: 1.15rem; }
+      .nav-auth .btn { padding: 8px 16px; font-size: 0.8rem; }
+      .hero { padding: 55px 4% 40px; }
+      .hero-cta .btn { padding: 12px 24px; font-size: 0.85rem; }
+      section.features, section.market, section.steps, section.cta { padding: 45px 4%; }
+
+      .market-table th, .market-table td { padding: 12px 12px; font-size: 0.82rem; }
+      .market-table th:nth-child(4), .market-table td:nth-child(4),
+      .market-table th:nth-child(5), .market-table td:nth-child(5) { display: none; }
+    }
+
+    @media (max-width: 400px) {
+      .coin-icon { width: 28px; height: 28px; font-size: 12px; }
+      .market-table td { font-size: 0.78rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ================= NAVBAR ================= -->
+<nav class="navbar">
+  <a href="index.html" class="nav-brand">
+    <div class="logo-icon">₿</div>
+    <span class="brand-gradient">NEXBIT</span>
+  </a>
+
+  <ul class="nav-links" id="navLinks">
+    <li><a href="#features">Features</a></li>
+    <li><a href="#market">Markets</a></li>
+    <li><a href="#how">How It Works</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ul>
+
+  <div class="nav-auth">
+    <!-- ✅ सीधे login.html और signup.html पर भेजें -->
+    <a href="login.html" class="btn btn-ghost">Log In</a>
+    <a href="signup.html" class="btn btn-primary">Sign Up</a>
+
+    <button class="mobile-toggle" onclick="toggleMobileMenu()">☰</button>
+  </div>
+</nav>
+
+<!-- ================= HERO ================= -->
+<section class="hero">
+  <span class="hero-badge">🚀 Trusted by 2M+ Traders Worldwide</span>
+  <h1>
+    Trade Every Crypto.<br>
+    <span class="accent">List New Tokens.</span><br>
+    Own Your Future.
+  </h1>
+  <p class="lead">
+    Buy & sell Bitcoin, Ethereum, Solana, BNB, XRP और thousands of altcoins on Nexbit —
+    the fastest, safest and most advanced crypto exchange. Want to launch your own token?
+    <strong style="color:var(--neon-green);">List it in minutes</strong> and reach millions of traders.
+  </p>
+
+  <div class="hero-cta">
+    <a href="signup.html" class="btn btn-primary">Get Started Free</a>
+    <a href="#market" class="btn btn-ghost">Explore Markets</a>
+  </div>
+</section>
+
+<!-- ================= TICKER ================= -->
+<div class="ticker-wrap">
+  <div class="ticker" id="ticker">
+    <!-- JS duplicates content for infinite scroll -->
+  </div>
+</div>
+
+<!-- ================= FEATURES ================= -->
+<section class="features" id="features">
+  <div class="section-head">
+    <h2>Everything a Crypto Trader Needs</h2>
+    <p>One platform — unlimited possibilities. Trade, invest, list tokens, earn passive income and much more.</p>
+  </div>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="feature-icon">💱</div>
+      <h3>Buy & Sell All Cryptos</h3>
+      <p>Bitcoin, Ethereum, Solana, BNB, XRP, Dogecoin और thousands of altcoins — 300+ pairs के साथ instant buy/sell करें low fees पर।</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">🚀</div>
+      <h3>List New Tokens</h3>
+      <p>अपना खुद का token launch करें? Nexbit पर minutes में listing कराएँ और millions of traders तक पहुँचें। Zero listing fee for verified projects.</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">🔒</div>
+      <h3>Bank-Grade Security</h3>
+      <p>256-bit encryption, cold storage, 2FA और real-time fraud detection — आपकी crypto assets military-grade security के साथ safe रहती हैं।</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>Lightning-Fast Trades</h3>
+      <p>Sub-millisecond matching engine — high-frequency trading भी बिना lag के execute होती है। 99.99% uptime guaranteed।</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">💰</div>
+      <h3>Earn & Staking</h3>
+      <p>Hold करें और कमाएँ — top coins पर up to 18% APY staking rewards, flexible savings accounts और launchpool opportunities।</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">📊</div>
+      <h3>Advanced Trading Tools</h3>
+      <p>Spot, Futures, Margin और P2P trading — professional charts, 100+ indicators और API access सब एक ही platform पर।</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">🌍</div>
+      <h3>Global Coverage</h3>
+      <p>180+ countries में services उपलब्ध। Local currency deposits, UPI, bank transfer और multiple payment methods supported।</p>
+    </div>
+
+    <div class="feature-card">
+      <div class="feature-icon">💎</div>
+      <h3>Lowest Fees</h3>
+      <p>Industry-leading 0.1% maker/taker fee. NEXBIT token holders को और भी discount मिलता है — up to 50% off।</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= MARKET ================= -->
+<section class="market" id="market">
+  <div class="section-head">
+    <h2>Live Crypto Markets</h2>
+    <p>Real-time prices of top cryptocurrencies. Trade instantly with one click.</p>
+  </div>
+
+  <div style="overflow-x:auto;">
+    <table class="market-table">
+      <thead>
+        <tr>
+          <th>Coin</th>
+          <th>Price</th>
+          <th>24h Change</th>
+          <th>Market Cap</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="marketBody">
+        <!-- JS fills -->
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================= HOW IT WORKS ================= -->
+<section class="steps" id="how">
+  <div class="section-head">
+    <h2>Start Trading in 3 Simple Steps</h2>
+    <p>No paperwork. No delays. Just create your account and start trading within minutes.</p>
+  </div>
+
+  <div class="steps-grid">
+    <div class="step-card">
+      <div class="step-num">1</div>
+      <h3>Create Account</h3>
+      <p>Email और password से sign up करें — कोई document नहीं, कोई wait नहीं। 30 seconds में account ready।</p>
+    </div>
+    <div class="step-card">
+      <div class="step-num">2</div>
+      <h3>Deposit Funds</h3>
+      <p>Bank transfer, UPI, crypto deposit या card — अपनी पसंद का method चुनें और instantly funds add करें।</p>
+    </div>
+    <div class="step-card">
+      <div class="step-num">3</div>
+      <h3>Trade & Earn</h3>
+      <p>300+ coins में से कोई भी खरीदें-बेचें, staking करें, या अपना token list कराएँ — सब कुछ एक platform पर।</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CTA ================= -->
+<section class="cta" id="contact">
+  <div class="cta-box">
+    <h2>Ready to Start Your Crypto Journey?</h2>
+    <p>Join millions of traders on Nexbit. Sign up today — free forever.</p>
+    <a href="signup.html" class="btn btn-primary" style="padding:14px 34px; font-size:1rem;">Create Free Account</a>
+  </div>
+</section>
+
+<!-- ================= FOOTER ================= -->
+<footer>
+  <p>© <span id="year"></span> <strong style="color:var(--neon-cyan);">NEXBIT</strong> — Your Gateway to Crypto Trading. All rights reserved.</p>
+  <p style="margin-top:8px; font-size:0.78rem;">
+    <a href="#">Terms</a> · <a href="#">Privacy</a> · <a href="#">Support</a>
+  </p>
+</footer>
+
+<!-- ================= MINI SCRIPT (only for ticker + market table + year + mobile menu) ================= -->
+<script>
+  /* ---------- Market Data (static demo) ---------- */
+  const marketData = [
+    { icon: "₿", cls: "btc", name: "Bitcoin",  sym: "BTC", price: 68432.15, change: +2.45, cap: "$1.34T" },
+    { icon: "Ξ", cls: "eth", name: "Ethereum", sym: "ETH", price: 3548.90,  change: +1.87, cap: "$426.5B" },
+    { icon: "◎", cls: "sol", name: "Solana",   sym: "SOL", price: 172.45,   change: -0.92, cap: "$78.9B" },
+    { icon: "B", cls: "bnb", name: "BNB",      sym: "BNB", price: 605.30,   change: +0.64, cap: "$89.2B" },
+    { icon: "X", cls: "xrp", name: "XRP",      sym: "XRP", price: 0.6234,   change: +3.12, cap: "$34.7B" }
+  ];
+
+  /* ---------- Render Market Table ---------- */
+  const tbody = document.getElementById("marketBody");
+  tbody.innerHTML = marketData.map(c => `
+    <tr>
+      <td>
+        <div class="coin-cell">
+          <div class="coin-icon ${c.cls}">${c.icon}</div>
+          <div>
+            <div>${c.name}</div>
+            <div class="coin-sym">${c.sym}</div>
+          </div>
+        </div>
+      </td>
+      <td>$${c.price.toLocaleString()}</td>
+      <td class="${c.change >= 0 ? 'price-up' : 'price-down'}">
+        ${c.change >= 0 ? '▲' : '▼'} ${Math.abs(c.change)}%
+      </td>
+      <td>${c.cap}</td>
+      <td><a href="login.html" class="btn-trade">Trade</a></td>
+    </tr>
+  `).join("");
+
+  /* ---------- Render Ticker ---------- */
+  const ticker = document.getElementById("ticker");
+  const items = marketData.map(c => `
+    <div class="ticker-item">
+      <span class="sym">${c.sym}</span>
+      <span class="price">$${c.price.toLocaleString()}</span>
+      <span class="${c.change >= 0 ? 'up' : 'down'}">
+        ${c.change >= 0 ? '▲' : '▼'} ${Math.abs(c.change)}%
+      </span>
+    </div>
+  `).join("");
+  ticker.innerHTML = items + items;
+
+  /* ---------- Year ---------- */
+  document.getElementById("year").textContent = new Date().getFullYear();
+
+  /* ---------- Mobile Menu Toggle ---------- */
+  function toggleMobileMenu() {
+    document.getElementById("navLinks").classList.toggle("mobile-open");
+  }
+  document.querySelectorAll(".nav-links a").forEach(a => {
+    a.addEventListener("click", () => {
+      document.getElementById("navLinks").classList.remove("mobile-open");
+    });
+  });
+</script>
+</body>
+</html>
