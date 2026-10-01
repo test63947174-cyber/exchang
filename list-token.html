@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>List Token — Nexbit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Same base CSS — root, body, navbar, sidebar, toast */
+    * { margin:0; padding:0; box-sizing:border-box; }
+    :root { --bg-dark:#050814; --bg-mid:#0a0f24; --bg-card:rgba(15,22,48,0.65); --neon-cyan:#00f0ff; --neon-green:#00ffa3; --neon-purple:#7b5cff; --neon-pink:#ff2e93; --text-main:#eaf6ff; --text-dim:#8b9bc0; --danger:#ff4d6d; --success:#00ffa3; }
+    body { font-family:'Poppins',sans-serif; color:var(--text-main); background: linear-gradient(135deg, var(--bg-dark), var(--bg-mid)); background-attachment:fixed; min-height:100vh; overflow-x:hidden; }
+    body::before, body::after { content:""; position:fixed; border-radius:50%; filter:blur(140px); z-index:0; pointer-events:none; }
+    body::before { width:500px;height:500px; background:rgba(255,46,147,0.12); top:-180px; left:-180px; }
+    body::after  { width:520px;height:520px; background:rgba(123,92,255,0.12); bottom:-200px; right:-200px; }
+
+    .navbar { position:sticky; top:0; z-index:100; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 5%; background:rgba(5,8,20,0.78); backdrop-filter:blur(18px); border-bottom:1px solid rgba(0,240,255,0.12); }
+    .nav-left { display:flex; align-items:center; gap:14px; }
+    .hamburger { background:rgba(0,240,255,0.06); border:1px solid rgba(0,240,255,0.25); border-radius:10px; padding:8px 10px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
+    .hamburger span { display:block; width:22px; height:2px; background:var(--neon-cyan); border-radius:2px; }
+    .nav-brand { display:flex; align-items:center; gap:10px; font-family:'Orbitron',sans-serif; font-size:1.25rem; font-weight:800; letter-spacing:1.5px; text-decoration:none; }
+    .logo-icon { width:34px; height:34px; display:grid; place-items:center; border-radius:10px; font-size:16px; font-weight:800; color:#041018; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green)); box-shadow:0 0 18px rgba(0,240,255,0.55); }
+    .brand-gradient { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .nav-actions { display:flex; align-items:center; gap:10px; }
+    .user-chip { display:flex; align-items:center; gap:10px; padding:5px 14px 5px 5px; background:rgba(0,240,255,0.08); border:1px solid rgba(0,240,255,0.3); border-radius:50px; }
+    .user-avatar { width:30px; height:30px; border-radius:50%; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple)); display:grid; place-items:center; font-weight:700; color:#041018; font-size:0.82rem; }
+    .user-chip span { font-size:0.82rem; font-weight:500; }
+    .btn { padding:9px 20px; border-radius:10px; font-family:inherit; font-size:0.83rem; font-weight:600; cursor:pointer; text-decoration:none; border:none; transition:all 0.25s ease; display:inline-block; }
+    .btn-ghost { background:transparent; color:var(--text-main); border:1px solid rgba(0,240,255,0.35); }
+    .btn-ghost:hover { border-color:var(--neon-cyan); color:var(--neon-cyan); }
+
+    .sidebar { position:fixed; top:0; left:0; bottom:0; width:290px; max-width:85vw; background:rgba(6,10,26,0.97); backdrop-filter:blur(22px); border-right:1px solid rgba(0,240,255,0.15); padding:22px 0 20px; transform:translateX(-100%); transition:transform 0.35s cubic-bezier(0.22,1,0.36,1); z-index:300; display:flex; flex-direction:column; overflow-y:auto; }
+    .sidebar.open { transform:translateX(0); }
+    .sidebar-head { display:flex; align-items:center; justify-content:space-between; padding:0 20px 20px; border-bottom:1px solid rgba(0,240,255,0.12); margin-bottom:16px; }
+    .logo-wrap { display:flex; align-items:center; gap:10px; }
+    .logo-wrap .logo-icon { width:38px; height:38px; font-size:18px; }
+    .logo-wrap .brand-gradient { font-family:'Orbitron',sans-serif; font-size:1.15rem; font-weight:800; letter-spacing:1.5px; }
+    .sidebar-close { background:none; border:none; color:var(--text-dim); font-size:1.3rem; cursor:pointer; padding:4px 8px; }
+    .sidebar-menu { flex:1; display:flex; flex-direction:column; padding:0 12px; gap:4px; }
+    .menu-item { display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:11px; color:var(--text-main); text-decoration:none; font-size:0.92rem; font-weight:500; transition:all 0.22s ease; }
+    .menu-item:hover { background:rgba(0,240,255,0.08); color:var(--neon-cyan); }
+    .menu-item.active { background: linear-gradient(90deg, rgba(255,46,147,0.15), rgba(123,92,255,0.08)); color:var(--neon-pink); border-left:3px solid var(--neon-pink); }
+    .mi-icon { font-size:1.15rem; width:22px; text-align:center; }
+    .menu-divider { height:1px; background: linear-gradient(90deg, transparent, rgba(0,240,255,0.25), transparent); margin:12px 8px; }
+    .sidebar-footer { padding:16px 16px 0; }
+    .help-card { background: linear-gradient(135deg, rgba(0,240,255,0.08), rgba(123,92,255,0.08)); border:1px solid rgba(0,240,255,0.2); border-radius:14px; padding:16px; text-align:center; }
+    .help-card h5 { font-family:'Orbitron',sans-serif; font-size:0.9rem; font-weight:700; margin-bottom:4px; }
+    .help-card p { font-size:0.75rem; color:var(--text-dim); margin-bottom:10px; }
+    .help-card a { color:var(--neon-cyan); font-size:0.8rem; font-weight:600; text-decoration:none; }
+    .sidebar-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); opacity:0; pointer-events:none; transition:opacity 0.3s; z-index:250; }
+    .sidebar-overlay.show { opacity:1; pointer-events:auto; }
+
+    .container { position:relative; z-index:1; max-width:900px; margin:0 auto; padding:30px 5% 60px; }
+
+    .hero-banner {
+      background: linear-gradient(135deg, rgba(255,46,147,0.15), rgba(123,92,255,0.15));
+      border: 1px solid rgba(255,46,147,0.4);
+      border-radius: 22px; padding: 32px 30px;
+      margin-bottom: 30px; text-align: center; position: relative; overflow: hidden;
+      box-shadow: 0 0 50px rgba(255,46,147,0.12);
+    }
+    .hero-banner h1 { font-family:'Orbitron',sans-serif; font-size: clamp(1.5rem, 3vw, 2.2rem); font-weight:900; letter-spacing:1px; margin-bottom:10px; }
+    .hero-banner h1 span { background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple), var(--neon-cyan)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+    .hero-banner p { color:var(--text-dim); font-size:0.9rem; font-weight:300; line-height:1.65; max-width:600px; margin:0 auto; }
+
+    .form-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border: 1px solid rgba(0,240,255,0.15);
+      border-radius: 20px;
+      padding: 32px 30px;
+    }
+    .form-row { display:grid; grid-template-columns: 1fr 1fr; gap:18px; }
+    .form-group { margin-bottom:18px; }
+    .form-group label { display:block; font-size:0.78rem; font-weight:500; letter-spacing:0.6px; color:var(--text-dim); margin-bottom:7px; text-transform:uppercase; }
+    .form-group input, .form-group textarea, .form-group select {
+      width:100%; padding:13px 16px;
+      background: rgba(5,10,25,0.75);
+      border:1px solid rgba(0,240,255,0.18);
+      border-radius:11px; color:var(--text-main);
+      font-size:0.92rem; font-family:inherit; outline:none;
+      transition: all 0.25s;
+    }
+    .form-group textarea { resize: vertical; min-height: 100px; }
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      border-color:var(--neon-cyan);
+      box-shadow: 0 0 0 3px rgba(0,240,255,0.12);
+    }
+    .form-group select { cursor: pointer; }
+    .form-group select option { background: var(--bg-mid); color: var(--text-main); }
+
+    .btn-submit {
+      width:100%; padding:15px; margin-top:12px;
+      border:none; border-radius:11px;
+      font-family:'Orbitron',sans-serif;
+      font-size:0.95rem; font-weight:700;
+      letter-spacing:1.5px; text-transform:uppercase;
+      color:#fff; cursor:pointer;
+      background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple));
+      box-shadow: 0 0 24px rgba(255,46,147,0.4);
+      transition: all 0.3s;
+    }
+    .btn-submit:hover:not(:disabled) { box-shadow: 0 0 38px rgba(255,46,147,0.7); transform: translateY(-2px); }
+    .btn-submit:disabled { opacity:0.6; cursor:not-allowed; }
+
+    .note {
+      margin-top: 18px; padding: 14px;
+      background: rgba(0,240,255,0.05);
+      border-left: 3px solid var(--neon-cyan);
+      border-radius: 8px;
+      font-size: 0.8rem; color: var(--text-dim); line-height: 1.6;
+    }
+
+    .toast { position:fixed; top:26px; left:50%; transform:translateX(-50%) translateY(-140px); background:rgba(5,15,30,0.96); border:1px solid var(--success); border-radius:12px; padding:14px 22px; color:var(--text-main); font-size:0.9rem; box-shadow:0 0 30px rgba(0,255,163,0.4); display:flex; align-items:center; gap:10px; z-index:999; opacity:0; transition:all 0.5s cubic-bezier(0.22,1,0.36,1); }
+    .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+    .toast .check { width:22px; height:22px; display:grid; place-items:center; border-radius:50%; background:var(--success); color:#041018; font-weight:800; font-size:13px; }
+
+    @media (max-width: 640px) {
+      .form-row { grid-template-columns: 1fr; gap: 0; }
+      .navbar { padding:12px 4%; }
+      .user-chip span { display:none; }
+      .container { padding:20px 4% 40px; }
+      .form-card { padding: 22px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <div class="nav-left">
+    <button class="hamburger" onclick="toggleSidebar()"><span></span><span></span><span></span></button>
+    <a href="dashboard.html" class="nav-brand"><div class="logo-icon">₿</div><span class="brand-gradient">NEXBIT</span></a>
+  </div>
+  <div class="nav-actions">
+    <div class="user-chip">
+      <div class="user-avatar" id="userAvatar">U</div>
+      <span id="userName">Trader</span>
+    </div>
+    <button class="btn btn-ghost" onclick="logoutUser()">Logout</button>
+  </div>
+</nav>
+
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-head">
+    <div class="logo-wrap"><div class="logo-icon">₿</div><span class="brand-gradient">NEXBIT</span></div>
+    <button class="sidebar-close" onclick="toggleSidebar()">✕</button>
+  </div>
+  <nav class="sidebar-menu">
+    <a href="dashboard.html"  class="menu-item"><span class="mi-icon">🏠</span> Dashboard</a>
+    <a href="market.html"     class="menu-item"><span class="mi-icon">📈</span> Markets</a>
+    <a href="trade.html"      class="menu-item"><span class="mi-icon">💱</span> Trade</a>
+    <a href="wallet.html"     class="menu-item"><span class="mi-icon">💰</span> Wallet</a>
+    <a href="orders.html"     class="menu-item"><span class="mi-icon">📋</span> Orders</a>
+    <a href="list-token.html" class="menu-item active"><span class="mi-icon">🚀</span> List Token</a>
+    <a href="profile.html"    class="menu-item"><span class="mi-icon">👤</span> Profile</a>
+    <a href="settings.html"   class="menu-item"><span class="mi-icon">⚙️</span> Settings</a>
+    <div class="menu-divider"></div>
+    <a href="#" class="menu-item" onclick="logoutUser(event)"><span class="mi-icon">🚪</span> Logout</a>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="help-card">
+      <div style="font-size:1.5rem; margin-bottom:6px;">🎧</div>
+      <h5>Need help?</h5>
+      <p>Our support team is online 24/7</p>
+      <a href="#">Contact Support</a>
+    </div>
+  </div>
+</aside>
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<div class="container">
+
+  <div class="hero-banner">
+    <h1>🚀 <span>List Your Token</span> on Nexbit</h1>
+    <p>Reach millions of traders worldwide. Submit your token for listing on the fastest-growing crypto exchange. Verification typically takes 3-5 business days.</p>
+  </div>
+
+  <div class="form-card">
+    <form id="listForm" novalidate>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tokenName">Token Name *</label>
+          <input type="text" id="tokenName" placeholder="e.g. MyCoin" required />
+        </div>
+        <div class="form-group">
+          <label for="tokenSymbol">Symbol *</label>
+          <input type="text" id="tokenSymbol" placeholder="e.g. MYC" maxlength="8" style="text-transform:uppercase;" required />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="tokenPrice">Initial Price (USD) *</label>
+          <input type="number" id="tokenPrice" placeholder="0.00" step="0.0001" min="0" required />
+        </div>
+        <div class="form-group">
+          <label for="tokenSupply">Total Supply *</label>
+          <input type="number" id="tokenSupply" placeholder="1000000" min="1" required />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="tokenNetwork">Blockchain Network *</label>
+        <select id="tokenNetwork" required>
+          <option value="">Select network…</option>
+          <option value="ethereum">Ethereum (ERC-20)</option>
+          <option value="bsc">Binance Smart Chain (BEP-20)</option>
+          <option value="solana">Solana (SPL)</option>
+          <option value="polygon">Polygon (MATIC)</option>
+          <option value="tron">Tron (TRC-20)</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="tokenContract">Contract Address *</label>
+        <input type="text" id="tokenContract" placeholder="0x…" required />
+      </div>
+
+      <div class="form-group">
+        <label for="tokenWebsite">Website URL</label>
+        <input type="url" id="tokenWebsite" placeholder="https://yourproject.com" />
+      </div>
+
+      <div class="form-group">
+        <label for="tokenDesc">Project Description *</label>
+        <textarea id="tokenDesc" placeholder="Tell us about your project, its use case, roadmap, and why it should be listed on Nexbit…" required></textarea>
+      </div>
+
+      <button type="submit" class="btn-submit" id="submitBtn">Submit for Review</button>
+
+      <div class="note">
+        ℹ️ <strong>Note:</strong> By submitting, you confirm that all information provided is accurate. Nexbit reserves the right to reject any application. Listing fee may apply for approved tokens.
+      </div>
+    </form>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"><span class="check">✓</span><span id="toastMsg">Submitted!</span></div>
+
+<script type="module" src="list-token.js"></script>
+</body>
+</html>
