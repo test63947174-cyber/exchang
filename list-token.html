@@ -146,6 +146,14 @@
     .form-group select { cursor: pointer; }
     .form-group select option { background: #0a0f24; color: var(--text-main); }
 
+    .hint {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      margin-top: 5px;
+      padding-left: 4px;
+      font-weight: 300;
+    }
+
     /* Logo upload */
     .logo-upload-block { margin-bottom: 24px; }
     .logo-upload-label {
@@ -173,6 +181,96 @@
     .logo-text strong { display: block; font-size: 0.95rem; font-weight: 600; }
     .logo-text small { color: var(--text-dim); font-size: 0.78rem; }
 
+    /* ============ PROGRESS BAR ============ */
+    .progress-wrap {
+      display: none;
+      margin-top: 20px;
+      padding: 18px 20px;
+      background: rgba(0, 240, 255, 0.06);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 14px;
+    }
+    .progress-wrap.show { display: block; animation: fadeIn 0.3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .progress-label {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 10px;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .progress-status { color: var(--neon-cyan); }
+    .progress-percent {
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 700;
+      color: var(--neon-green);
+      font-size: 0.95rem;
+    }
+
+    .progress-bar-bg {
+      width: 100%; height: 10px;
+      background: rgba(5, 10, 25, 0.9);
+      border-radius: 20px;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid rgba(0, 240, 255, 0.15);
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      border-radius: 20px;
+      transition: width 0.35s ease;
+      position: relative;
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.6);
+    }
+    .progress-bar-fill::after {
+      content: "";
+      position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+      animation: shimmer 1.5s infinite;
+    }
+    @keyframes shimmer {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(100%); }
+    }
+
+    .progress-steps {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .step-line {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      transition: all 0.3s;
+    }
+    .step-line.active { color: var(--neon-cyan); }
+    .step-line.done { color: var(--neon-green); }
+    .step-icon {
+      width: 20px; height: 20px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      background: rgba(139, 155, 192, 0.15);
+      border: 1px solid rgba(139, 155, 192, 0.3);
+      font-size: 0.65rem;
+      flex-shrink: 0;
+      font-weight: 800;
+    }
+    .step-line.active .step-icon {
+      background: rgba(0, 240, 255, 0.15);
+      border-color: var(--neon-cyan);
+      color: var(--neon-cyan);
+    }
+    .step-line.done .step-icon {
+      background: var(--neon-green);
+      border-color: var(--neon-green);
+      color: #041018;
+    }
+
+    /* ============ SUBMIT BUTTON ============ */
     .btn-submit {
       width: 100%; padding: 15px; margin-top: 12px;
       border: none; border-radius: 11px;
@@ -196,7 +294,7 @@
     }
 
     /* ============ TOAST ============ */
-    .toast { position: fixed; top: 26px; left: 50%; transform: translateX(-50%) translateY(-140px); background: rgba(5,15,30,0.96); border: 1px solid var(--success); border-radius: 12px; padding: 14px 22px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 0 30px rgba(0,255,163,0.4); display: flex; align-items: center; gap: 10px; z-index: 999; opacity: 0; transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1); }
+    .toast { position: fixed; top: 26px; left: 50%; transform: translateX(-50%) translateY(-140px); background: rgba(5,15,30,0.96); border: 1px solid var(--success); border-radius: 12px; padding: 14px 22px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 0 30px rgba(0,255,163,0.4); display: flex; align-items: center; gap: 10px; z-index: 999; opacity: 0; transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1); max-width: 90vw; }
     .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
     .toast .check { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--success); color: #041018; font-weight: 800; font-size: 13px; flex-shrink: 0; }
 
@@ -335,23 +433,52 @@
 
       <div class="form-group">
         <label for="tokenWebsite">🌐 Website URL</label>
-        <input type="url" id="tokenWebsite" placeholder="https://yourproject.com" />
+        <input type="text" id="tokenWebsite" placeholder="https://yourproject.com" />
+        <div class="hint">Optional — अपनी project की website का link</div>
       </div>
 
       <div class="form-row">
         <div class="form-group">
           <label for="tokenTwitter">𝕏 Twitter / X</label>
-          <input type="url" id="tokenTwitter" placeholder="https://twitter.com/username" />
+          <input type="text" id="tokenTwitter" placeholder="@username या https://twitter.com/username" />
+          <div class="hint">Link या सिर्फ़ @username दोनों चलेगा</div>
         </div>
         <div class="form-group">
           <label for="tokenTelegram">✈️ Telegram</label>
-          <input type="url" id="tokenTelegram" placeholder="https://t.me/yourchannel" />
+          <input type="text" id="tokenTelegram" placeholder="@channelname या https://t.me/channel" />
+          <div class="hint">Link या सिर्फ़ @username दोनों चलेगा</div>
         </div>
       </div>
 
       <div class="form-group">
         <label for="tokenDesc">Project Description * (min 30 chars)</label>
         <textarea id="tokenDesc" placeholder="Tell us about your project, its use case, roadmap, and why it should be listed on Nexbit…" required></textarea>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-label">
+          <span class="progress-status" id="progressStatus">Starting…</span>
+          <span class="progress-percent" id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+
+        <div class="progress-steps">
+          <div class="step-line" id="step1">
+            <span class="step-icon">1</span>
+            <span>Logo upload हो रहा है…</span>
+          </div>
+          <div class="step-line" id="step2">
+            <span class="step-icon">2</span>
+            <span>Token data save हो रहा है…</span>
+          </div>
+          <div class="step-line" id="step3">
+            <span class="step-icon">3</span>
+            <span>Dashboard पर भेजा जा रहा है…</span>
+          </div>
+        </div>
       </div>
 
       <button type="submit" class="btn-submit" id="submitBtn">Submit for Review</button>
