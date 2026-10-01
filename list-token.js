@@ -125,10 +125,6 @@ function isValidTelegram(str) {
   if (!str) return true;
   return /^https?:\/\/(www\.)?t\.me\/[A-Za-z0-9_]{4,32}/.test(str);
 }
-function isValidDiscord(str) {
-  if (!str) return true;
-  return /^https?:\/\/(www\.)?(discord\.gg|discord\.com\/invite)\/[A-Za-z0-9]+/.test(str);
-}
 
 /* =========================================================
    UPLOAD LOGO TO FIREBASE STORAGE
@@ -161,7 +157,6 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
   const website  = document.getElementById("tokenWebsite").value.trim();
   const twitter  = document.getElementById("tokenTwitter").value.trim();
   const telegram = document.getElementById("tokenTelegram").value.trim();
-  const discord  = document.getElementById("tokenDiscord").value.trim();
   const desc     = document.getElementById("tokenDesc").value.trim();
   const logoFile = document.getElementById("tokenLogo")?.files[0] || null;
 
@@ -195,9 +190,6 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
   }
   if (telegram && !isValidTelegram(telegram)) {
     showToast("Telegram URL should be like https://t.me/yourchannel", false); return;
-  }
-  if (discord && !isValidDiscord(discord)) {
-    showToast("Discord invite URL is not valid.", false); return;
   }
 
   const btn = document.getElementById("submitBtn");
@@ -233,8 +225,7 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
       website,
       social: {
         twitter:  twitter  || "",
-        telegram: telegram || "",
-        discord:  discord  || ""
+        telegram: telegram || ""
       },
       description: desc,
       logo: logoURL,
