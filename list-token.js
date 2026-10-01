@@ -1,8 +1,11 @@
 /* =========================================================
    Nexbit — List Token Page
    File: list-token.js
-   Features: Token submission with social links, logo,
-             website, and tracking on dashboard
+   Features:
+   - Flexible Twitter/Telegram input (@username OR URL)
+   - Logo saved to localStorage before upload
+   - Live progress bar during submission
+   - Auto-redirect to dashboard
    ========================================================= */
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
@@ -88,42 +91,101 @@ onAuthStateChanged(auth, (user) => {
 });
 
 /* =========================================================
-   LOGO PREVIEW
+   LOGO PICKER — Save to localStorage
    ========================================================= */
-const logoInput = document.getElementById("tokenLogo");
+const logoInput   = document.getElementById("tokenLogo");
 const logoPreview = document.getElementById("logoPreview");
+const LOGO_KEY    = "Nexbit_TokenLogo";
+
+// Restore saved logo on page load
+(function restoreLogo() {
+  const saved = localStorage.getItem(LOGO_KEY);
+  if (saved && logoPreview) {
+    logoPreview.innerHTML = `<img src="${saved}" alt="logo" />`;
+  }
+})();
 
 if (logoInput) {
   logoInput.addEventListener("change", (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
     if (file.size > 2 * 1024 * 1024) {
       showToast("Logo must be under 2MB", false);
       logoInput.value = "";
       return;
     }
+    if (!file.type.startsWith("image/")) {
+      showToast("Please select an image file", false);
+      logoInput.value = "";
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (ev) => {
-      logoPreview.innerHTML = `<img src="${ev.target.result}" alt="logo" />`;
+      const dataUrl = ev.target.result;
+
+      // ✅ Save to localStorage (so it persists if page reloads)
+      try {
+        localStorage.setItem(LOGO_KEY, dataUrl);
+        console.log("✅ Logo saved to localStorage");
+      } catch (err) {
+        console.warn("localStorage full or unavailable:", err);
+      }
+
+      // Show preview
+      logoPreview.innerHTML = `<img src="${dataUrl}" alt="logo" />`;
+      showToast("✅ Logo ready", true);
     };
     reader.readAsDataURL(file);
   });
 }
 
 /* =========================================================
-   URL VALIDATION HELPERS
+   SOCIAL HANDLE NORMALIZERS
+   अगर user @username दे या link दे — दोनों accept करें
    ========================================================= */
-function isValidURL(str) {
-  if (!str) return true;
-  try { new URL(str); return true; } catch { return false; }
+function normalizeTwitter(input) {
+  if (!input) return "";
+  input = input.trim();
+  if (!input) return "";
+
+  // अगर पहले से URL है
+  if (/^https?:\/\//i.test(input)) return input;
+
+  // अगर @ से शुरू होता है
+  if (input.startsWith("@")) {
+    return "https://twitter.com/" + input.slice(1);
+  }
+
+  // अगर सिर्फ़ username है
+  return "https://twitter.com/" + input;
 }
-function isValidTwitter(str) {
-  if (!str) return true;
-  return /^https?:\/\/(www\.)?(twitter|x)\.com\/[A-Za-z0-9_]{1,15}/.test(str);
+
+function normalizeTelegram(input) {
+  if (!input) return "";
+  input = input.trim();
+  if (!input) return "";
+
+  // अगर पहले से URL है
+  if (/^https?:\/\//i.test(input)) return input;
+
+  // अगर @ से शुरू होता है
+  if (input.startsWith("@")) {
+    return "https://t.me/" + input.slice(1);
+  }
+
+  // अगर सिर्फ़ username है
+  return "https://t.me/" + input;
 }
-function isValidTelegram(str) {
-  if (!str) return true;
-  return /^https?:\/\/(www\.)?t\.me\/[A-Za-z0-9_]{4,32}/.test(str);
+
+function normalizeWebsite(input) {
+  if (!input) return "";
+  input = input.trim();
+  if (!input) return "";
+
+  if (/^https?:\/\//i.test(input)) return input;
+  return "https://" + input;
 }
 
 /* =========================================================
@@ -139,6 +201,46 @@ async function uploadLogo(file, uid) {
 }
 
 /* =========================================================
+   DATA URL → FILE (localStorage से Firebase Storage भेजने के लिए)
+   ========================================================= */
+function dataURLtoFile(dataUrl, filename) {
+  const arr = dataUrl.split(",");
+  const mime = arr[0].match(/:(.*?);/)[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) u8arr[n] = bstr.charCodeAt(n);
+  return new File([u8arr], filename, { type: mime });
+}
+
+/* =========================================================
+   PROGRESS BAR HELPERS
+   ========================================================= */
+const progressWrap    = document.getElementById("progressWrap");
+const progressFill    = document.getElementById("progressFill");
+const progressPercent = document.getElementById("progressPercent");
+const progressStatus  = document.getElementById("progressStatus");
+const step1 = document.getElementById("step1");
+const step2 = document.getElementById("step2");
+const step3 = document.getElementById("step3");
+
+function setProgress(percent, status) {
+  progressFill.style.width = percent + "%";
+  progressPercent.textContent = Math.round(percent) + "%";
+  if (status) progressStatus.textContent = status;
+}
+
+function markStep(stepEl, state) {
+  stepEl.classList.remove("active", "done");
+  if (state === "active") stepEl.classList.add("active");
+  if (state === "done")   stepEl.classList.add("done");
+}
+
+function resetSteps() {
+  [step1, step2, step3].forEach(s => s.classList.remove("active", "done"));
+}
+
+/* =========================================================
    SUBMIT FORM
    ========================================================= */
 document.getElementById("listForm").addEventListener("submit", async (e) => {
@@ -147,7 +249,7 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
   const user = auth.currentUser;
   if (!user) { showToast("Please log in first.", false); return; }
 
-  // --- Collect form data ---
+  // --- Collect ---
   const name     = document.getElementById("tokenName").value.trim();
   const symbol   = document.getElementById("tokenSymbol").value.trim().toUpperCase();
   const price    = parseFloat(document.getElementById("tokenPrice").value) || 0;
@@ -182,36 +284,63 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
   if (!desc || desc.length < 30) {
     showToast("Description must be at least 30 characters.", false); return;
   }
-  if (website && !isValidURL(website)) {
-    showToast("Website URL is not valid.", false); return;
-  }
-  if (twitter && !isValidTwitter(twitter)) {
-    showToast("Twitter URL should be like https://twitter.com/username", false); return;
-  }
-  if (telegram && !isValidTelegram(telegram)) {
-    showToast("Telegram URL should be like https://t.me/yourchannel", false); return;
-  }
+
+  // --- Normalize socials (flexible: @username or URL) ---
+  const websiteFinal  = normalizeWebsite(website);
+  const twitterFinal  = normalizeTwitter(twitter);
+  const telegramFinal = normalizeTelegram(telegram);
 
   const btn = document.getElementById("submitBtn");
   btn.disabled = true;
   const orig = btn.textContent;
   btn.textContent = "Submitting…";
 
+  // Show progress bar
+  progressWrap.classList.add("show");
+  resetSteps();
+  setProgress(0, "Starting…");
+  progressWrap.scrollIntoView({ behavior: "smooth", block: "center" });
+
   try {
-    // --- Upload logo (optional) ---
+    // ---------- STEP 1: Logo Upload ----------
+    markStep(step1, "active");
+    setProgress(10, "Preparing logo…");
+
     let logoURL = "";
-    if (logoFile) {
-      btn.textContent = "Uploading logo…";
-      try {
-        logoURL = await uploadLogo(logoFile, user.uid);
-      } catch (logoErr) {
-        console.warn("Logo upload failed, continuing without logo:", logoErr);
-        logoURL = "";
+
+    // Priority: file input → localStorage saved logo
+    let logoToUpload = logoFile;
+    if (!logoToUpload) {
+      const savedLogo = localStorage.getItem(LOGO_KEY);
+      if (savedLogo && savedLogo.startsWith("data:image")) {
+        try {
+          logoToUpload = dataURLtoFile(savedLogo, `logo_${Date.now()}.png`);
+        } catch (err) {
+          console.warn("Could not convert saved logo:", err);
+        }
       }
     }
 
-    // --- Build data object ---
-    btn.textContent = "Saving…";
+    if (logoToUpload) {
+      try {
+        setProgress(25, "Uploading logo…");
+        logoURL = await uploadLogo(logoToUpload, user.uid);
+        setProgress(45, "Logo uploaded ✓");
+        markStep(step1, "done");
+      } catch (logoErr) {
+        console.warn("Logo upload failed, continuing:", logoErr);
+        markStep(step1, "done");
+        setProgress(45, "Logo skipped");
+      }
+    } else {
+      markStep(step1, "done");
+      setProgress(45, "No logo");
+    }
+
+    // ---------- STEP 2: Save token data ----------
+    markStep(step2, "active");
+    setProgress(55, "Saving token data…");
+
     const data = {
       ownerUid:    user.uid,
       ownerEmail:  user.email,
@@ -222,10 +351,10 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
       supply,
       network,
       contract,
-      website,
+      website: websiteFinal,
       social: {
-        twitter:  twitter  || "",
-        telegram: telegram || ""
+        twitter:  twitterFinal,
+        telegram: telegramFinal
       },
       description: desc,
       logo: logoURL,
@@ -233,11 +362,13 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
       submittedAt: new Date().toISOString()
     };
 
-    // --- Save under /tokenListings (public list) ---
+    // Save under /tokenListings
     const newRef = push(ref(db, "tokenListings"));
     await set(newRef, data);
 
-    // --- Also save under /users/{uid}/myTokens for quick lookup ---
+    setProgress(75, "Saved to main list");
+
+    // Save under /users/{uid}/myTokens
     await set(ref(db, `users/${user.uid}/myTokens/${newRef.key}`), {
       tokenId:     newRef.key,
       name,
@@ -247,7 +378,15 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
       submittedAt: data.submittedAt
     });
 
-    showToast("🎉 Token submitted successfully! Under review.", true);
+    setProgress(90, "Added to dashboard");
+    markStep(step2, "done");
+
+    // ---------- STEP 3: Redirect ----------
+    markStep(step3, "active");
+    setProgress(100, "Success! Redirecting…");
+
+    // Clear localStorage logo
+    try { localStorage.removeItem(LOGO_KEY); } catch (_) {}
 
     // Reset form
     document.getElementById("listForm").reset();
@@ -255,14 +394,21 @@ document.getElementById("listForm").addEventListener("submit", async (e) => {
       logoPreview.innerHTML = `<span style="font-size:1.8rem;">🪙</span>`;
     }
 
-    // Redirect to dashboard after 2.2 seconds
+    showToast("🎉 Token submitted successfully! Under review.", true);
+    markStep(step3, "done");
+
     setTimeout(() => {
       window.location.href = "dashboard.html";
-    }, 2200);
+    }, 1600);
 
   } catch (err) {
     console.error("Token submission error:", err);
     showToast(err.message || "Submission failed. Try again.", false);
+    setProgress(0, "Failed ❌");
+
+    // Reset UI
+    progressWrap.classList.remove("show");
+    resetSteps();
   } finally {
     btn.disabled = false;
     btn.textContent = orig;
