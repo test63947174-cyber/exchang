@@ -1,24 +1,46 @@
 /* =========================================================
-   Nexbit — Dashboard
+   Nexbit Exchange — Dashboard
    File: dashboard.js
-   Firebase Project: exchang-59ea7
-   Features: Welcome, balance, coins, MY LISTED TOKENS,
-             transactions, RND featured
+
+   Features:
+   - Live public market prices from Binance Spot API
+   - Live RND market data from DexScreener (BSC / PancakeSwap)
+   - No fabricated prices, balances or transactions
+   - Firebase Authentication
+   - Firebase user balance
+   - User-listed tokens
+   - Safe rendering of user-provided text (escapeHTML)
+   - Periodic refresh (Binance 30s, RND 15s)
+
+   IMPORTANT:
+   This file does not implement real order execution.
+   Live prices are informational only.
    ========================================================= */
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, onAuthStateChanged, signOut }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getDatabase, ref, get }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-import { getAnalytics }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-analytics.js";
+import { initializeApp } from
+  "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 
-/* ---------- Firebase Config ---------- */
+import {
+  getAuth,
+  onAuthStateChanged,
+  signOut
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+import {
+  getDatabase,
+  ref,
+  get
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+/* =========================================================
+   1. FIREBASE CONFIGURATION
+   ========================================================= */
+
 const firebaseConfig = {
   apiKey: "AIzaSyDKFkbj5WRUinr_v7ARRtD-Gsxz4UlMrl0",
   authDomain: "exchang-59ea7.firebaseapp.com",
-  databaseURL: "https://exchang-59ea7-default-rtdb.asia-southeast1.firebasedatabase.app",
+  databaseURL:
+    "https://exchang-59ea7-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "exchang-59ea7",
   storageBucket: "exchang-59ea7.firebasestorage.app",
   messagingSenderId: "422935424250",
@@ -26,241 +48,625 @@ const firebaseConfig = {
   measurementId: "G-E6NV9Q2SW9"
 };
 
-const app       = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-const auth      = getAuth(app);
-const db        = getDatabase(app);
+const app  = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db   = getDatabase(app);
 
 /* =========================================================
-   DEMO DATA — Coins
+   2. MARKET CONFIGURATION
    ========================================================= */
+
+const MARKET_API = "https://api.binance.com/api/v3/ticker/24hr";
+const PRICE_REFRESH_MS = 30_000;
+
 const coins = [
-  { icon: "₿", cls: "btc",  name: "Bitcoin",   sym: "BTC",  price: 68432.15, change: +2.45 },
-  { icon: "Ξ", cls: "eth",  name: "Ethereum",  sym: "ETH",  price: 3548.90,  change: +1.87 },
-  { icon: "X", cls: "xrp",  name: "XRP",       sym: "XRP",  price: 0.6234,   change: +3.12 },
-  { icon: "◎", cls: "sol",  name: "Solana",    sym: "SOL",  price: 172.45,   change: -0.92 },
-  { icon: "B", cls: "bnb",  name: "BNB",       sym: "BNB",  price: 605.30,   change: +0.64 },
-  { icon: "Ð", cls: "doge", name: "Dogecoin",  sym: "DOGE", price: 0.1582,   change: -1.24 },
-  { icon: "R", cls: "rnd",  name: "RND Token", sym: "RND",  price: 1.247,    change: +18.42 }
+  {
+    name: "Bitcoin",  sym: "BTC",  icon: "₿", cls: "btc",
+    marketSymbol: "BTCUSDT", price: null, change: null
+  },
+  {
+    name: "Ethereum", sym: "ETH",  icon: "Ξ", cls: "eth",
+    marketSymbol: "ETHUSDT", price: null, change: null
+  },
+  {
+    name: "XRP",      sym: "XRP",  icon: "X", cls: "xrp",
+    marketSymbol: "XRPUSDT", price: null, change: null
+  },
+  {
+    name: "Solana",   sym: "SOL",  icon: "◎", cls: "sol",
+    marketSymbol: "SOLUSDT", price: null, change: null
+  },
+  {
+    name: "BNB",      sym: "BNB",  icon: "B", cls: "bnb",
+    marketSymbol: "BNBUSDT", price: null, change: null
+  },
+  {
+    name: "Dogecoin", sym: "DOGE", icon: "Ð", cls: "doge",
+    marketSymbol: "DOGEUSDT", price: null, change: null
+  }
 ];
 
-/* =========================================================
-   DEMO DATA — Recent Activity
-   ========================================================= */
-const demoTransactions = [
-  { date: "2026-10-01 14:22", type: "buy",  asset: "BTC", amount: "0.0245 BTC", value: "$1,676.58", status: "Completed" },
-  { date: "2026-09-30 09:15", type: "dep",  asset: "USD", amount: "$500.00",    value: "$500.00",    status: "Completed" },
-  { date: "2026-09-29 21:48", type: "buy",  asset: "RND", amount: "1,200 RND",  value: "$1,496.40",  status: "Completed" },
-  { date: "2026-09-28 17:02", type: "sell", asset: "ETH", amount: "0.15 ETH",   value: "$532.34",    status: "Completed" },
-  { date: "2026-09-27 11:33", type: "buy",  asset: "XRP", amount: "800 XRP",    value: "$498.72",    status: "Pending"   }
-];
+let priceRefreshTimer = null;
+let priceRefreshInProgress = false;
+let currentUser = null;
 
 /* =========================================================
-   SIDEBAR TOGGLE
+   3. RND TOKEN CONFIGURATION
    ========================================================= */
+
+const RND_ADDRESS = "0xcF1FbF18bE9202865bcf88E6349B9D207F75942d";
+const RND_API =
+  `https://api.dexscreener.com/token-pairs/v1/bsc/${RND_ADDRESS}`;
+const RND_REFRESH_MS = 15_000;
+let rndRefreshTimer = null;
+
+/* =========================================================
+   4. SAFE HELPERS
+   ========================================================= */
+
+function getElement(id) {
+  return document.getElementById(id);
+}
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[char]);
+}
+
+function formatNumber(value, maxDigits = 8) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  return n.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: maxDigits
+  });
+}
+
+function showToast(message, success = true) {
+  const toast = getElement("toast");
+  const toastMessage = getElement("toastMsg");
+
+  if (!toast || !toastMessage) {
+    console[success ? "log" : "error"](message);
+    return;
+  }
+
+  toastMessage.textContent = message;
+  toast.style.borderColor = success ? "var(--success)" : "var(--danger)";
+
+  const icon = toast.querySelector(".check");
+  if (icon) {
+    icon.textContent = success ? "✓" : "✕";
+    icon.style.background = success ? "var(--success)" : "var(--danger)";
+  }
+
+  toast.classList.add("show");
+  setTimeout(() => toast.classList.remove("show"), 3200);
+}
+
+/* =========================================================
+   5. SIDEBAR
+   ========================================================= */
+
 window.toggleSidebar = () => {
-  document.getElementById("sidebar").classList.toggle("open");
-  document.getElementById("sidebarOverlay").classList.toggle("show");
+  const sidebar = getElement("sidebar");
+  const overlay = getElement("sidebarOverlay");
+  sidebar?.classList.toggle("open");
+  overlay?.classList.toggle("show");
 };
-document.addEventListener("keydown", e => {
-  if (e.key === "Escape") {
-    document.getElementById("sidebar").classList.remove("open");
-    document.getElementById("sidebarOverlay").classList.remove("show");
+
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape") {
+    getElement("sidebar")?.classList.remove("open");
+    getElement("sidebarOverlay")?.classList.remove("show");
   }
 });
 
 /* =========================================================
-   TOAST
+   6. LOGOUT
    ========================================================= */
-function showToast(msg, ok = true) {
-  const t = document.getElementById("toast");
-  document.getElementById("toastMsg").textContent = msg;
-  t.style.borderColor = ok ? "var(--success)" : "var(--danger)";
-  t.style.boxShadow = ok
-    ? "0 0 30px rgba(0,255,163,0.4)"
-    : "0 0 30px rgba(255,77,109,0.4)";
-  const c = t.querySelector(".check");
-  c.style.background = ok ? "var(--success)" : "var(--danger)";
-  c.textContent = ok ? "✓" : "✕";
-  t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 3200);
-}
 
-/* =========================================================
-   LOGOUT
-   ========================================================= */
-window.logoutUser = async (e) => {
-  if (e) e.preventDefault();
+window.logoutUser = async event => {
+  event?.preventDefault();
   try {
     await signOut(auth);
     localStorage.removeItem("Nexbit_User");
     window.location.href = "index.html";
-  } catch (err) {
-    showToast("Logout failed", false);
+  } catch (error) {
+    console.error("Logout failed:", error);
+    showToast("Logout failed. Please try again.", false);
   }
 };
 
 /* =========================================================
-   RENDER — Coin Cards
+   7. RENDER COIN CARDS
+   Unavailable prices remain unavailable.
+   No hardcoded fallback prices are used.
    ========================================================= */
+
 function renderCoins() {
-  const grid = document.getElementById("coinsGrid");
+  const grid = getElement("coinsGrid");
   if (!grid) return;
 
-  grid.innerHTML = coins.map(c => `
-    <a href="trade.html?coin=${c.sym}" class="coin-card">
-      <div class="top">
-        <div class="coin-icon ${c.cls}">${c.icon}</div>
-        <div>
-          <div class="coin-title">${c.name}</div>
-          <div class="coin-sym">${c.sym}</div>
+  grid.innerHTML = coins.map(coin => {
+    const priceAvailable =
+      Number.isFinite(coin.price) && coin.price > 0;
+    const changeAvailable = Number.isFinite(coin.change);
+
+    const priceText = priceAvailable
+      ? `$${formatNumber(coin.price, coin.price < 1 ? 6 : 2)}`
+      : "Price unavailable";
+
+    const changeText = changeAvailable
+      ? `${coin.change >= 0 ? "▲" : "▼"} ${Math.abs(coin.change).toFixed(2)}%`
+      : "24h change unavailable";
+
+    const changeClass = changeAvailable
+      ? (coin.change >= 0 ? "up" : "down")
+      : "";
+
+    return `
+      <a
+        href="trade.html?coin=${encodeURIComponent(coin.sym)}"
+        class="coin-card"
+        aria-label="${escapeHTML(coin.name)} (${escapeHTML(coin.sym)})"
+      >
+        <div class="top">
+          <div class="coin-icon ${escapeHTML(coin.cls)}">
+            ${escapeHTML(coin.icon)}
+          </div>
+          <div>
+            <div class="coin-title">${escapeHTML(coin.name)}</div>
+            <div class="coin-sym">${escapeHTML(coin.sym)}</div>
+          </div>
         </div>
-      </div>
-      <div class="price-row">
-        <div class="price">$${c.price.toLocaleString()}</div>
-        <div class="change ${c.change >= 0 ? 'up' : 'down'}">
-          ${c.change >= 0 ? '▲' : '▼'} ${Math.abs(c.change)}%
+
+        <div class="price-row">
+          <div class="price">${escapeHTML(priceText)}</div>
+          <div class="change ${changeClass}">${escapeHTML(changeText)}</div>
         </div>
-      </div>
-    </a>
-  `).join("");
+      </a>
+    `;
+  }).join("");
 }
 
 /* =========================================================
-   RENDER — Recent Transactions
+   8. FETCH LIVE BINANCE PRICES
    ========================================================= */
-function renderTransactions() {
-  const tbody = document.getElementById("txBody");
+
+async function fetchMarketPrice(coin) {
+  if (!coin.marketSymbol) {
+    return { price: null, change: null, available: false };
+  }
+
+  const url = new URL(MARKET_API);
+  url.searchParams.set("symbol", coin.marketSymbol);
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+    signal: AbortSignal.timeout(10_000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Market API returned HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  const price = Number(data.lastPrice);
+  const change = Number(data.priceChangePercent);
+
+  if (
+    !Number.isFinite(price) || price <= 0 ||
+    !Number.isFinite(change)
+  ) {
+    throw new Error(`Invalid ticker data for ${coin.sym}`);
+  }
+
+  return { price, change, available: true };
+}
+
+async function refreshMarketPrices() {
+  if (priceRefreshInProgress) return;
+  priceRefreshInProgress = true;
+
+  try {
+    await Promise.all(coins.map(async coin => {
+      try {
+        const result = await fetchMarketPrice(coin);
+        coin.price = result.price;
+        coin.change = result.change;
+      } catch (error) {
+        console.error(
+          `Unable to update ${coin.sym} market data:`, error
+        );
+        coin.price = null;
+        coin.change = null;
+      }
+    }));
+    renderCoins();
+  } finally {
+    priceRefreshInProgress = false;
+  }
+}
+
+function startMarketPriceUpdates() {
+  if (priceRefreshTimer !== null) clearInterval(priceRefreshTimer);
+  refreshMarketPrices();
+  priceRefreshTimer = setInterval(refreshMarketPrices, PRICE_REFRESH_MS);
+}
+
+/* =========================================================
+   9. RND LIVE MARKET (DexScreener / PancakeSwap BSC)
+   ========================================================= */
+
+async function loadRNDMarket() {
+  const response = await fetch(RND_API, { cache: "no-store" });
+
+  if (!response.ok) {
+    throw new Error("RND market data unavailable");
+  }
+
+  const pairs = await response.json();
+
+  const validPairs = pairs.filter(pair =>
+    pair.chainId === "bsc" &&
+    (
+      pair.baseToken?.address?.toLowerCase() === RND_ADDRESS.toLowerCase() ||
+      pair.quoteToken?.address?.toLowerCase() === RND_ADDRESS.toLowerCase()
+    ) &&
+    Number(pair.priceUsd) > 0 &&
+    Number(pair.liquidity?.usd) > 0
+  );
+
+  validPairs.sort(
+    (a, b) => Number(b.liquidity.usd) - Number(a.liquidity.usd)
+  );
+
+  if (!validPairs.length) {
+    throw new Error("No verified RND market pool found");
+  }
+
+  const pair = validPairs[0];
+
+  return {
+    priceUsd: Number(pair.priceUsd),
+    change24h: Number(pair.priceChange?.h24),
+    volume24h: Number(pair.volume?.h24),
+    liquidityUsd: Number(pair.liquidity?.usd),
+    pairAddress: pair.pairAddress,
+    dexId: pair.dexId,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+async function updateRNDDisplay() {
+  try {
+    const market = await loadRNDMarket();
+
+    const price = getElement("rndPrice");
+    const change = getElement("rndChange");
+    const volume = getElement("rndVolume");
+    const liquidity = getElement("rndLiquidity");
+    const updated = getElement("rndUpdated");
+
+    if (price) {
+      const p = market.priceUsd;
+      let priceText;
+      if (p < 0.0001)      priceText = p.toFixed(8);
+      else if (p < 0.01)   priceText = p.toFixed(6);
+      else if (p < 1)      priceText = p.toFixed(4);
+      else                 priceText = p.toFixed(2);
+      price.textContent = "$" + priceText;
+      price.classList.remove("muted");
+    }
+
+    if (change && Number.isFinite(market.change24h)) {
+      change.textContent =
+        (market.change24h >= 0 ? "▲ +" : "▼ ") +
+        market.change24h.toFixed(2) + "%";
+      change.dataset.direction =
+        market.change24h >= 0 ? "up" : "down";
+    }
+
+    if (volume && Number.isFinite(market.volume24h)) {
+      volume.textContent =
+        "$" + market.volume24h.toLocaleString("en-US", {
+          maximumFractionDigits: 0
+        });
+    }
+
+    if (liquidity && Number.isFinite(market.liquidityUsd)) {
+      liquidity.textContent =
+        "$" + market.liquidityUsd.toLocaleString("en-US", {
+          maximumFractionDigits: 0
+        });
+    }
+
+    if (updated) {
+      updated.textContent =
+        "🟢 Live · Updated " +
+        new Date(market.updatedAt).toLocaleTimeString("en-US");
+    }
+
+  } catch (error) {
+    console.error("RND market update failed:", error);
+
+    const price = getElement("rndPrice");
+    const change = getElement("rndChange");
+    const volume = getElement("rndVolume");
+    const liquidity = getElement("rndLiquidity");
+    const updated = getElement("rndUpdated");
+
+    if (price) {
+      price.textContent = "Unavailable";
+      price.classList.add("muted");
+    }
+    if (change)    change.textContent = "—";
+    if (volume)    volume.textContent = "—";
+    if (liquidity) liquidity.textContent = "—";
+    if (updated)   updated.textContent =
+      "⚠️ Live market data unavailable — DexScreener may be temporarily down";
+  }
+}
+
+function startRNDUpdates() {
+  if (rndRefreshTimer !== null) clearInterval(rndRefreshTimer);
+  updateRNDDisplay();
+  rndRefreshTimer = setInterval(updateRNDDisplay, RND_REFRESH_MS);
+}
+
+/* =========================================================
+   10. BALANCE DISPLAY
+   Display the balance actually stored in Firebase.
+   ========================================================= */
+
+function animateCount(element, from, to, duration = 600) {
+  if (!element) return;
+
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    element.textContent = "Balance unavailable";
+    return;
+  }
+
+  const start = performance.now();
+
+  function step(now) {
+    const progress = Math.min((now - start) / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const value = from + (to - from) * eased;
+
+    element.textContent = "$" + value.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
+    if (progress < 1) requestAnimationFrame(step);
+  }
+
+  requestAnimationFrame(step);
+}
+
+function renderBalance(balance) {
+  const balanceElement = getElement("balanceAmount");
+  const changeElement = getElement("balanceChange");
+
+  if (!Number.isFinite(balance) || balance < 0) {
+    if (balanceElement) balanceElement.textContent = "Balance unavailable";
+    if (changeElement) changeElement.textContent = "Unable to verify balance";
+    return;
+  }
+
+  animateCount(balanceElement, 0, balance, 600);
+
+  if (changeElement) {
+    changeElement.textContent =
+      "Daily change unavailable — verified ledger required";
+  }
+}
+
+/* =========================================================
+   11. RECENT TRANSACTIONS
+   No demo data is shown as real activity.
+   ========================================================= */
+
+function renderTransactions(transactions = []) {
+  const tbody = getElement("txBody");
   if (!tbody) return;
 
-  tbody.innerHTML = demoTransactions.map(t => `
+  if (!Array.isArray(transactions) || transactions.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6">
+          No verified transactions available.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = transactions.map(transaction => `
     <tr>
-      <td>${t.date}</td>
-      <td><span class="tx-type ${t.type}">${t.type.toUpperCase()}</span></td>
-      <td><strong>${t.asset}</strong></td>
-      <td>${t.amount}</td>
-      <td>${t.value}</td>
-      <td style="color:${t.status === 'Completed' ? 'var(--neon-green)' : 'var(--text-dim)'}; font-weight:500;">
-        ${t.status}
+      <td>${escapeHTML(transaction.date)}</td>
+      <td>
+        <span class="tx-type ${escapeHTML(transaction.type)}">
+          ${escapeHTML(transaction.type).toUpperCase()}
+        </span>
       </td>
+      <td><strong>${escapeHTML(transaction.asset)}</strong></td>
+      <td>${escapeHTML(transaction.amount)}</td>
+      <td>${escapeHTML(transaction.value)}</td>
+      <td>${escapeHTML(transaction.status)}</td>
     </tr>
   `).join("");
 }
 
 /* =========================================================
-   RENDER — MY LISTED TOKENS
+   12. MY LISTED TOKENS
    ========================================================= */
+
 async function loadMyTokens(uid) {
-  const wrap = document.getElementById("myTokensWrap");
-  if (!wrap) return;
+  const wrapper = getElement("myTokensWrap");
+  if (!wrapper) return;
+
+  wrapper.textContent = "Loading your listed tokens...";
 
   try {
-    const snap = await get(ref(db, `users/${uid}/myTokens`));
+    const snapshot = await get(ref(db, `users/${uid}/myTokens`));
 
-    if (!snap.exists()) {
-      wrap.innerHTML = `
+    if (!snapshot.exists()) {
+      wrapper.innerHTML = `
         <div class="empty-state">
           <span class="emoji">🪙</span>
-          <p>You haven't listed any token yet.</p>
-          <p style="margin-top:8px;"><a href="list-token.html">+ List Your First Token</a></p>
-        </div>`;
+          <p>You haven't listed any tokens yet.</p>
+          <p style="margin-top:8px;">
+            <a href="list-token.html">+ List Your First Token</a>
+          </p>
+        </div>
+      `;
       return;
     }
 
-    const tokens = snap.val();
-    const list = Object.values(tokens).sort(
-      (a, b) => new Date(b.submittedAt) - new Date(a.submittedAt)
-    );
+    const value = snapshot.val();
 
-    wrap.innerHTML = list.map(t => {
-      const statusText =
-        t.status === "pending"  ? "⏳ Under Review" :
-        t.status === "approved" ? "✅ Approved" :
-        t.status === "rejected" ? "❌ Rejected" : t.status;
+    const tokenList = Object.values(value)
+      .filter(token => token && typeof token === "object")
+      .sort((a, b) => {
+        const dateA = Date.parse(a.submittedAt) || 0;
+        const dateB = Date.parse(b.submittedAt) || 0;
+        return dateB - dateA;
+      });
+
+    if (tokenList.length === 0) {
+      wrapper.textContent = "No listed tokens found.";
+      return;
+    }
+
+    wrapper.innerHTML = tokenList.map(token => {
+      const status = String(token.status || "unknown");
+
+      const statusText = {
+        pending:  "⏳ Under Review",
+        approved: "✅ Approved",
+        rejected: "❌ Rejected"
+      }[status] || "Status unavailable";
+
+      const safeLogo =
+        typeof token.logo === "string" &&
+        /^https:\/\//i.test(token.logo)
+          ? token.logo
+          : "";
+
+      const logoMarkup = safeLogo
+        ? `<img src="${escapeHTML(safeLogo)}"
+                alt="${escapeHTML(token.symbol || "Token")}"
+                loading="lazy"
+                referrerpolicy="no-referrer">`
+        : "🪙";
 
       return `
         <div class="my-token-card">
-          <div class="my-token-logo">
-            ${t.logo
-              ? `<img src="${t.logo}" alt="${t.symbol}" />`
-              : `🪙`}
-          </div>
+          <div class="my-token-logo">${logoMarkup}</div>
           <div class="my-token-info">
-            <h4>${t.name}</h4>
-            <div class="sym">${t.symbol}</div>
-            <span class="my-token-status status-${t.status}">${statusText}</span>
+            <h4>${escapeHTML(token.name || "Unnamed token")}</h4>
+            <div class="sym">${escapeHTML(token.symbol || "N/A")}</div>
+            <span class="my-token-status status-${escapeHTML(status)}">
+              ${escapeHTML(statusText)}
+            </span>
           </div>
         </div>
       `;
     }).join("");
 
-  } catch (err) {
-    console.error("Failed to load tokens:", err);
-    wrap.innerHTML = `<div class="empty-state">Failed to load tokens.</div>`;
+  } catch (error) {
+    console.error("Failed to load listed tokens:", error);
+    wrapper.textContent =
+      "Unable to load your listed tokens. Please try again.";
   }
 }
 
 /* =========================================================
-   ANIMATED COUNT-UP
+   13. AUTH STATE + LOAD USER DATA
    ========================================================= */
-function animateCount(el, from, to, duration = 800) {
-  const start = performance.now();
-  const easeOut = t => 1 - Math.pow(1 - t, 3);
 
-  function step(now) {
-    const p = Math.min((now - start) / duration, 1);
-    const v = from + (to - from) * easeOut(p);
-    el.textContent = "$" + v.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
-    if (p < 1) requestAnimationFrame(step);
-  }
-  requestAnimationFrame(step);
-}
-
-/* =========================================================
-   AUTH STATE + LOAD USER DATA
-   ========================================================= */
-onAuthStateChanged(auth, async (user) => {
+onAuthStateChanged(auth, async user => {
   if (!user) {
+    currentUser = null;
     window.location.href = "login.html";
     return;
   }
 
+  currentUser = user;
+
+  const nameElement    = getElement("userName");
+  const avatarElement  = getElement("userAvatar");
+  const welcomeElement = getElement("welcomeName");
+
   let displayName = user.displayName || "Trader";
-  let balanceUSD  = 0;
+  let balanceUSD  = null;
 
   try {
-    const snap = await get(ref(db, "users/" + user.uid));
-    if (snap.exists()) {
-      const v = snap.val();
-      if (v.fullName)    displayName = v.fullName;
-      if (v.balanceUSD)  balanceUSD  = Number(v.balanceUSD) || 0;
+    const snapshot = await get(ref(db, `users/${user.uid}`));
+
+    if (snapshot.exists()) {
+      const data = snapshot.val();
+
+      if (typeof data.fullName === "string" && data.fullName.trim()) {
+        displayName = data.fullName.trim();
+      }
+
+      const storedBalance = Number(data.balanceUSD);
+
+      if (
+        data.balanceUSD !== undefined &&
+        Number.isFinite(storedBalance) &&
+        storedBalance >= 0
+      ) {
+        balanceUSD = storedBalance;
+      }
     }
-  } catch (_) {}
+  } catch (error) {
+    console.error("Unable to load user account:", error);
+  }
 
-  const first = displayName.split(" ")[0];
-  document.getElementById("userName").textContent    = first;
-  document.getElementById("userAvatar").textContent  = first.charAt(0).toUpperCase();
-  document.getElementById("welcomeName").textContent = first;
+  const firstName = displayName.split(/\s+/)[0] || "Trader";
 
-  // Balance animation
-  const total = balanceUSD + 2847.35;
-  animateCount(document.getElementById("balanceAmount"), 0, total, 800);
+  if (nameElement)    nameElement.textContent = firstName;
+  if (avatarElement)  avatarElement.textContent = firstName.charAt(0).toUpperCase();
+  if (welcomeElement) welcomeElement.textContent = firstName;
 
-  const dailyChange = total * 0.0324;
-  document.getElementById("balanceChange").textContent =
-    `▲ $${dailyChange.toFixed(2)} (3.24%) today`;
+  if (balanceUSD === null) {
+    const balanceElement = getElement("balanceAmount");
+    const changeElement  = getElement("balanceChange");
 
-  // Load my tokens
-  loadMyTokens(user.uid);
+    if (balanceElement) balanceElement.textContent = "Balance unavailable";
+    if (changeElement)  changeElement.textContent  = "Account balance could not be verified";
+  } else {
+    renderBalance(balanceUSD);
+  }
+
+  renderTransactions([]);
+  await loadMyTokens(user.uid);
 });
 
 /* =========================================================
-   INITIAL RENDER
+   14. INITIALIZATION
    ========================================================= */
+
 document.addEventListener("DOMContentLoaded", () => {
   renderCoins();
-  renderTransactions();
+  renderTransactions([]);
+  startMarketPriceUpdates();
+  startRNDUpdates();
+});
+
+window.addEventListener("beforeunload", () => {
+  if (priceRefreshTimer !== null) clearInterval(priceRefreshTimer);
+  if (rndRefreshTimer !== null)   clearInterval(rndRefreshTimer);
 });
