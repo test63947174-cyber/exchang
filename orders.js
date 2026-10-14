@@ -1,7 +1,7 @@
 /* =========================================================
    Nexbit — Orders Page
    File: orders.js
-   Version: 2.1 (matches updated orders.html)
+   Version: 2.0 (Developer Instructions compliant)
 
    IMPORTANT:
    - No demo orders. All orders are loaded from Firebase.
@@ -42,8 +42,8 @@ const db   = getDatabase(app);
 /* =========================================================
    2. CONSTANTS
    ========================================================= */
-const VALID_TYPES  = ["buy", "sell"];
-const VALID_STATUS = ["pending", "open", "filled", "cancelled", "rejected"];
+const VALID_TYPES   = ["buy", "sell"];
+const VALID_STATUS  = ["pending", "open", "filled", "cancelled", "rejected"];
 
 /* If false → Cancel button is disabled and shows a message.
    Set to true ONLY when a real backend order engine exists. */
@@ -128,7 +128,6 @@ let currentUser = null;
 onAuthStateChanged(auth, (user) => {
   if (!user) { window.location.href = "login.html"; return; }
   currentUser = user;
-
   const name  = user.displayName || "Trader";
   const first = name.split(" ")[0];
   const un = getElement("userName");
@@ -136,63 +135,29 @@ onAuthStateChanged(auth, (user) => {
   if (un) un.textContent = first;
   if (ua) ua.textContent = first.charAt(0).toUpperCase();
 
+  /* Load orders once we know the user */
   loadAllData(user.uid);
 });
 
 /* =========================================================
-   6. DATA CACHE + LOADING
+   6. DATA LOADING
    ========================================================= */
 const ordersCache = {
-  open:    [],
-  history: [],
-  trades:  []
+  open:    [],   // pending / open
+  history: [],   // filled / cancelled / rejected
+  trades:  []    // executed trades only
 };
 
 let dataLoaded = false;
 
-/* Update tab count badges */
-function updateTabCounts() {
-  const set = (id, n) => {
-    const el = getElement(id);
-    if (el) el.textContent = n;
-  };
-  set("countOpen",    ordersCache.open.length);
-  set("countHistory", ordersCache.history.length);
-  set("countTrades",  ordersCache.trades.length);
-}
-
-/* Show loading state in table */
-function showLoading() {
-  const tbody = getElement("ordersBody");
-  if (!tbody) return;
-  tbody.innerHTML = `
-    <tr>
-      <td colspan="8" class="loading-cell">
-        <div class="spinner"></div>
-        <div>Loading your orders…</div>
-      </td>
-    </tr>`;
-}
-
-/* Show error state in table */
-function showError(message) {
-  const tbody = getElement("ordersBody");
-  if (!tbody) return;
-  tbody.innerHTML = `
-    <tr>
-      <td colspan="8" class="empty-cell" style="color:var(--danger);">
-        <span class="emoji">⚠️</span>
-        ${escapeHTML(message || "Unable to load your orders.")}
-      </td>
-    </tr>`;
-}
-
-/* =========================================================
-   7. LOAD ORDERS + TRADES FROM FIREBASE
-   ========================================================= */
 async function loadAllData(uid) {
-  showLoading();
-  updateTabCounts();
+  const tbody = getElement("ordersBody");
+  if (tbody) {
+    tbody.innerHTML = `
+      <tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-dim);">
+        Loading your orders…
+      </td></tr>`;
+  }
 
   try {
     const [ordersSnap, tradesSnap] = await Promise.all([
@@ -200,7 +165,7 @@ async function loadAllData(uid) {
       get(ref(db, `users/${uid}/trades`))
     ]);
 
-    /* ----- Orders ----- */
+    /* --- Orders --- */
     const rawOrders = ordersSnap.exists() ? ordersSnap.val() : {};
     const openList    = [];
     const historyList = [];
@@ -226,7 +191,7 @@ async function loadAllData(uid) {
       }
     });
 
-    /* ----- Trades ----- */
+    /* --- Trades --- */
     const rawTrades = tradesSnap.exists() ? tradesSnap.val() : {};
     const tradeList = Object.entries(rawTrades)
       .filter(([, t]) => t && typeof t === "object")
@@ -240,7 +205,7 @@ async function loadAllData(uid) {
         createdAt: t.executedAt || t.createdAt || t.timestamp || null
       }));
 
-    /* ----- Sort newest first ----- */
+    /* Sort newest first */
     const sortByDate = (a, b) =>
       new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
 
@@ -249,18 +214,22 @@ async function loadAllData(uid) {
     ordersCache.trades  = tradeList.sort(sortByDate);
 
     dataLoaded = true;
-    updateTabCounts();
     renderOrders();
 
   } catch (err) {
     console.error("Failed to load orders:", err);
-    showError("Unable to load your orders. Please try again later.");
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr><td colspan="7" style="text-align:center; padding:40px; color:var(--danger);">
+          Unable to load your orders. Please try again later.
+        </td></tr>`;
+    }
     showToast("Failed to load orders", false);
   }
 }
 
 /* =========================================================
-   8. RENDER TABLE
+   7. RENDER
    ========================================================= */
 let currentTab = "open";
 
@@ -270,44 +239,34 @@ function renderOrders() {
 
   const list = ordersCache[currentTab] || [];
 
-  /* ----- Empty states ----- */
+  /* Empty states */
   if (!list.length) {
     const messages = {
       open:    "You have no open orders.",
       history: "No order history yet.",
       trades:  "No executed trades yet."
     };
-    const icons = {
-      open:    "📋",
-      history: "📜",
-      trades:  "💱"
-    };
-
     tbody.innerHTML = `
       <tr>
-        <td colspan="8" class="empty-cell">
-          <span class="emoji">${icons[currentTab] || "📋"}</span>
-          ${escapeHTML(messages[currentTab] || "No records.")}
-          <span class="sub">Orders will appear once trading is live.</span>
+        <td colspan="7" style="text-align:center; padding:40px; color:var(--text-dim);">
+          ${messages[currentTab] || "No records."}
         </td>
       </tr>`;
     return;
   }
 
-  /* ----- Rows ----- */
-  tbody.innerHTML = list.map((o, i) => {
+  tbody.innerHTML = list.map(o => {
     /* Type badge */
     const typeBadge = o.type === "buy"
       ? `<span class="badge buy">BUY</span>`
       : o.type === "sell"
       ? `<span class="badge sell">SELL</span>`
-      : `<span class="badge unknown">${escapeHTML(o.type.toUpperCase())}</span>`;
+      : `<span class="badge">${escapeHTML(o.type.toUpperCase())}</span>`;
 
     /* Status badge */
-    const statusLabel = o.status.charAt(0).toUpperCase() + o.status.slice(1);
     const statusBadge = `
       <span class="badge ${escapeHTML(o.status)}">
-        ${escapeHTML(statusLabel)}
+        ${escapeHTML(o.status.charAt(0).toUpperCase() + o.status.slice(1))}
       </span>`;
 
     /* Action button */
@@ -315,35 +274,34 @@ function renderOrders() {
 
     if (currentTab === "open" && (o.status === "pending" || o.status === "open")) {
       if (BACKEND_CANCEL_ENABLED) {
-        actionBtn = `
-          <button class="btn-action ghost"
-                  onclick="cancelOrder('${escapeHTML(o.id)}')">
-            Cancel
-          </button>`;
+        actionBtn = `<button class="btn btn-ghost"
+                       style="padding:6px 14px; font-size:0.75rem;"
+                       onclick="cancelOrder('${escapeHTML(o.id)}')">
+                       Cancel
+                     </button>`;
       } else {
-        /* Disabled — no fake cancel */
-        actionBtn = `
-          <button class="btn-action disabled"
-                  title="Cancellation not available yet — no order-matching backend"
-                  onclick="showCancelUnavailable()">
-            Cancel
-          </button>`;
+        /* Realistic UX: no fake cancel. Show it as disabled + tooltip */
+        actionBtn = `<button class="btn btn-ghost"
+                       style="padding:6px 14px; font-size:0.75rem; opacity:0.5; cursor:not-allowed;"
+                       title="Cancellation not available yet — no order-matching backend"
+                       onclick="showCancelUnavailable()">
+                       Cancel
+                     </button>`;
       }
     } else {
       /* Re-trade — safe pair URL */
       const safePair = encodeURIComponent(o.pair);
-      actionBtn = `
-        <a href="trade.html?pair=${safePair}"
-           class="btn-action ghost">
-          Re-trade
-        </a>`;
+      actionBtn = `<a href="trade.html?pair=${safePair}"
+                     class="btn btn-ghost"
+                     style="padding:6px 14px; font-size:0.75rem;">
+                     Re-trade
+                   </a>`;
     }
 
     return `
       <tr>
-        <td class="row-num">${i + 1}</td>
         <td>${escapeHTML(formatDateTime(o.createdAt))}</td>
-        <td class="pair-cell">${escapeHTML(o.pair)}</td>
+        <td><strong>${escapeHTML(o.pair)}</strong></td>
         <td>${typeBadge}</td>
         <td>${o.price != null ? "$" + escapeHTML(formatNumber(o.price)) : "Market"}</td>
         <td>${escapeHTML(formatNumber(o.amount))}</td>
@@ -355,7 +313,7 @@ function renderOrders() {
 }
 
 /* =========================================================
-   9. CANCEL (disabled until backend exists)
+   8. CANCEL (disabled until backend exists)
    ========================================================= */
 window.showCancelUnavailable = function () {
   showToast(
@@ -365,18 +323,17 @@ window.showCancelUnavailable = function () {
 };
 
 window.cancelOrder = function (orderId) {
-  /* Stub for when BACKEND_CANCEL_ENABLED becomes true.
-     Must call a real backend / Cloud Function and only update
+  /* Kept as a stub for when BACKEND_CANCEL_ENABLED becomes true.
+     It must call a real backend / Cloud Function and only update
      status after server confirmation. Do NOT fake success here. */
   console.warn("cancelOrder called with id:", orderId);
   showToast("Cancel is not implemented in the backend yet.", false);
 };
 
 /* =========================================================
-   10. TABS + INIT
+   9. TABS
    ========================================================= */
 document.addEventListener("DOMContentLoaded", () => {
-  /* Tab buttons */
   const tabs = document.querySelectorAll(".tab-btn");
   tabs.forEach(btn => {
     btn.addEventListener("click", () => {
@@ -387,8 +344,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
-  /* Initial loading state (before auth resolves) */
-  if (!dataLoaded) {
-    showLoading();
+  /* If data hasn't loaded yet (auth pending), show a hint */
+  const tbody = getElement("ordersBody");
+  if (tbody && !dataLoaded) {
+    tbody.innerHTML = `
+      <tr><td colspan="7" style="text-align:center; padding:40px; color:var(--text-dim);">
+        Loading your orders…
+      </td></tr>`;
   }
 });
