@@ -1,4 +1,3 @@
-<!-- wallet.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,111 +7,514 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    /* ✅ Same common CSS from dashboard.html — paste the whole root+navbar+sidebar+toast block here */
-    * { margin:0; padding:0; box-sizing:border-box; }
-    :root { --bg-dark:#050814; --bg-mid:#0a0f24; --bg-card:rgba(15,22,48,0.65); --neon-cyan:#00f0ff; --neon-green:#00ffa3; --neon-purple:#7b5cff; --text-main:#eaf6ff; --text-dim:#8b9bc0; --danger:#ff4d6d; --success:#00ffa3; }
-    body { font-family:'Poppins',sans-serif; color:var(--text-main); background: linear-gradient(135deg, var(--bg-dark), var(--bg-mid)); background-attachment:fixed; min-height:100vh; overflow-x:hidden; }
-    body::before, body::after { content:""; position:fixed; border-radius:50%; filter:blur(140px); z-index:0; pointer-events:none; }
-    body::before { width:500px;height:500px; background:rgba(0,240,255,0.12); top:-180px; left:-180px; }
-    body::after  { width:520px;height:520px; background:rgba(123,92,255,0.12); bottom:-200px; right:-200px; }
+    /* ============ RESET & VARS ============ */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg-dark: #050814;
+      --bg-mid: #0a0f24;
+      --bg-card: rgba(15, 22, 48, 0.65);
+      --neon-cyan: #00f0ff;
+      --neon-green: #00ffa3;
+      --neon-purple: #7b5cff;
+      --neon-pink: #ff2e93;
+      --text-main: #eaf6ff;
+      --text-dim: #8b9bc0;
+      --danger: #ff4d6d;
+      --success: #00ffa3;
+      --warning: #ffbd2e;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Poppins', sans-serif;
+      color: var(--text-main);
+      background: linear-gradient(135deg, var(--bg-dark), var(--bg-mid));
+      background-attachment: fixed;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    body::before, body::after {
+      content: ""; position: fixed; border-radius: 50%;
+      filter: blur(140px); z-index: 0; pointer-events: none;
+    }
+    body::before { width: 500px; height: 500px; background: rgba(0,240,255,0.12); top: -180px; left: -180px; }
+    body::after  { width: 520px; height: 520px; background: rgba(123,92,255,0.12); bottom: -200px; right: -200px; }
 
-    .navbar { position:sticky; top:0; z-index:100; display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 5%; background:rgba(5,8,20,0.78); backdrop-filter:blur(18px); border-bottom:1px solid rgba(0,240,255,0.12); }
-    .nav-left { display:flex; align-items:center; gap:14px; }
-    .hamburger { background:rgba(0,240,255,0.06); border:1px solid rgba(0,240,255,0.25); border-radius:10px; padding:8px 10px; cursor:pointer; display:flex; flex-direction:column; gap:4px; }
-    .hamburger span { display:block; width:22px; height:2px; background:var(--neon-cyan); border-radius:2px; }
-    .nav-brand { display:flex; align-items:center; gap:10px; font-family:'Orbitron',sans-serif; font-size:1.25rem; font-weight:800; text-decoration:none; }
-    .logo-icon { width:34px; height:34px; display:grid; place-items:center; border-radius:10px; font-size:16px; font-weight:800; color:#041018; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green)); }
-    .brand-gradient { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    .nav-actions { display:flex; align-items:center; gap:10px; }
-    .user-chip { display:flex; align-items:center; gap:10px; padding:5px 14px 5px 5px; background:rgba(0,240,255,0.08); border:1px solid rgba(0,240,255,0.3); border-radius:50px; }
-    .user-avatar { width:30px; height:30px; border-radius:50%; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple)); display:grid; place-items:center; font-weight:700; color:#041018; font-size:0.82rem; }
-    .user-chip span { font-size:0.82rem; }
-    .btn { padding:9px 20px; border-radius:10px; font-family:inherit; font-size:0.83rem; font-weight:600; cursor:pointer; text-decoration:none; border:none; transition:all 0.25s; display:inline-block; }
-    .btn-ghost { background:transparent; color:var(--text-main); border:1px solid rgba(0,240,255,0.35); }
-    .btn-primary { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green)); color:#041018; }
-    .btn-primary:hover { box-shadow:0 0 34px rgba(0,255,163,0.6); transform:translateY(-2px); }
-
-    .sidebar { position:fixed; top:0; left:0; bottom:0; width:290px; max-width:85vw; background:rgba(6,10,26,0.97); backdrop-filter:blur(22px); border-right:1px solid rgba(0,240,255,0.15); padding:22px 0 20px; transform:translateX(-100%); transition:transform 0.35s cubic-bezier(0.22,1,0.36,1); z-index:300; display:flex; flex-direction:column; overflow-y:auto; }
-    .sidebar.open { transform:translateX(0); }
-    .sidebar-head { display:flex; align-items:center; justify-content:space-between; padding:0 20px 20px; border-bottom:1px solid rgba(0,240,255,0.12); margin-bottom:16px; }
-    .logo-wrap { display:flex; align-items:center; gap:10px; }
-    .logo-wrap .logo-icon { width:38px; height:38px; font-size:18px; }
-    .logo-wrap .brand-gradient { font-family:'Orbitron',sans-serif; font-size:1.15rem; font-weight:800; }
-    .sidebar-close { background:none; border:none; color:var(--text-dim); font-size:1.3rem; cursor:pointer; padding:4px 8px; }
-    .sidebar-menu { flex:1; display:flex; flex-direction:column; padding:0 12px; gap:4px; }
-    .menu-item { display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:11px; color:var(--text-main); text-decoration:none; font-size:0.92rem; font-weight:500; transition:all 0.22s; }
-    .menu-item:hover { background:rgba(0,240,255,0.08); color:var(--neon-cyan); }
-    .menu-item.active { background: linear-gradient(90deg, rgba(0,240,255,0.15), rgba(0,255,163,0.08)); color:var(--neon-cyan); border-left:3px solid var(--neon-cyan); }
-    .mi-icon { font-size:1.15rem; width:22px; text-align:center; }
-    .menu-divider { height:1px; background: linear-gradient(90deg, transparent, rgba(0,240,255,0.25), transparent); margin:12px 8px; }
-    .sidebar-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.6); opacity:0; pointer-events:none; transition:opacity 0.3s; z-index:250; }
-    .sidebar-overlay.show { opacity:1; pointer-events:auto; }
-
-    .container { position:relative; z-index:1; max-width:1200px; margin:0 auto; padding:30px 5% 60px; }
-    .page-head { margin-bottom:30px; }
-    .page-head h1 { font-family:'Orbitron',sans-serif; font-size: clamp(1.5rem, 3vw, 2.2rem); font-weight:800; margin-bottom:6px; }
-    .page-head h1 span { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    .page-head p { color:var(--text-dim); font-size:0.9rem; }
-
-    .wallet-hero {
-      background: linear-gradient(135deg, rgba(0,240,255,0.12), rgba(123,92,255,0.12));
+    /* ============ NAVBAR ============ */
+    .navbar {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; padding: 14px 5%;
+      background: rgba(5,8,20,0.78);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid rgba(0,240,255,0.12);
+    }
+    .nav-left { display: flex; align-items: center; gap: 14px; }
+    .hamburger {
+      background: rgba(0,240,255,0.06);
+      border: 1px solid rgba(0,240,255,0.25);
+      border-radius: 10px; padding: 8px 10px;
+      cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+    }
+    .hamburger span { display: block; width: 22px; height: 2px; background: var(--neon-cyan); border-radius: 2px; }
+    .nav-brand {
+      display: flex; align-items: center; gap: 10px;
+      font-family: 'Orbitron', sans-serif; font-size: 1.25rem; font-weight: 800;
+      letter-spacing: 1.5px; text-decoration: none;
+    }
+    .logo-icon {
+      width: 34px; height: 34px; display: grid; place-items: center;
+      border-radius: 10px; font-size: 16px; font-weight: 800; color: #041018;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 18px rgba(0,240,255,0.55);
+    }
+    .brand-gradient {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .nav-actions { display: flex; align-items: center; gap: 10px; }
+    .user-chip {
+      display: flex; align-items: center; gap: 10px;
+      padding: 5px 14px 5px 5px;
+      background: rgba(0,240,255,0.08);
+      border: 1px solid rgba(0,240,255,0.3);
+      border-radius: 50px;
+    }
+    .user-avatar {
+      width: 30px; height: 30px; border-radius: 50%;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-purple));
+      display: grid; place-items: center;
+      font-weight: 700; color: #041018; font-size: 0.82rem;
+    }
+    .user-chip span { font-size: 0.82rem; font-weight: 500; }
+    .btn {
+      padding: 9px 20px; border-radius: 10px;
+      font-family: inherit; font-size: 0.83rem; font-weight: 600;
+      cursor: pointer; text-decoration: none; border: none;
+      transition: all 0.25s; display: inline-block;
+      white-space: nowrap;
+    }
+    .btn-ghost {
+      background: transparent; color: var(--text-main);
       border: 1px solid rgba(0,240,255,0.35);
-      border-radius: 22px; padding: 32px;
+    }
+    .btn-ghost:hover {
+      border-color: var(--neon-cyan); color: var(--neon-cyan);
+      box-shadow: 0 0 18px rgba(0,240,255,0.25);
+    }
+    .btn-primary {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      color: #041018;
+      box-shadow: 0 0 22px rgba(0,240,255,0.35);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 0 34px rgba(0,255,163,0.6);
+      transform: translateY(-2px);
+    }
+    .btn-pink {
+      background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple));
+      color: #fff;
+      box-shadow: 0 0 22px rgba(255,46,147,0.4);
+    }
+    .btn-pink:hover {
+      box-shadow: 0 0 34px rgba(255,46,147,0.7);
+      transform: translateY(-2px);
+    }
+
+    /* ============ SIDEBAR ============ */
+    .sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0;
+      width: 290px; max-width: 85vw;
+      background: rgba(6,10,26,0.97);
+      backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+      border-right: 1px solid rgba(0,240,255,0.15);
+      padding: 22px 0 20px;
+      transform: translateX(-100%);
+      transition: transform 0.35s cubic-bezier(0.22,1,0.36,1);
+      z-index: 300; display: flex; flex-direction: column;
+      overflow-y: auto;
+      box-shadow: 30px 0 60px rgba(0,0,0,0.5);
+    }
+    .sidebar.open { transform: translateX(0); }
+    .sidebar-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px 20px;
+      border-bottom: 1px solid rgba(0,240,255,0.12);
+      margin-bottom: 16px;
+    }
+    .logo-wrap { display: flex; align-items: center; gap: 10px; }
+    .logo-wrap .logo-icon { width: 38px; height: 38px; font-size: 18px; }
+    .logo-wrap .brand-gradient {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.15rem; font-weight: 800;
+      letter-spacing: 1.5px;
+    }
+    .sidebar-close {
+      background: none; border: none;
+      color: var(--text-dim); font-size: 1.3rem;
+      cursor: pointer; padding: 4px 8px;
+      border-radius: 6px; transition: all 0.2s;
+    }
+    .sidebar-close:hover { color: var(--danger); background: rgba(255,77,109,0.1); }
+    .sidebar-menu {
+      flex: 1; display: flex; flex-direction: column;
+      padding: 0 12px; gap: 4px;
+    }
+    .menu-item {
+      display: flex; align-items: center; gap: 14px;
+      padding: 12px 16px; border-radius: 11px;
+      color: var(--text-main); text-decoration: none;
+      font-size: 0.92rem; font-weight: 500;
+      transition: all 0.22s;
+    }
+    .menu-item:hover { background: rgba(0,240,255,0.08); color: var(--neon-cyan); padding-left: 20px; }
+    .menu-item.active {
+      background: linear-gradient(90deg, rgba(0,240,255,0.15), rgba(0,255,163,0.08));
+      color: var(--neon-cyan);
+      border-left: 3px solid var(--neon-cyan);
+      padding-left: 16px;
+    }
+    .mi-icon { font-size: 1.15rem; width: 22px; text-align: center; }
+    .menu-divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0,240,255,0.25), transparent);
+      margin: 12px 8px;
+    }
+    .sidebar-footer { padding: 16px 16px 0; }
+    .help-card {
+      background: linear-gradient(135deg, rgba(0,240,255,0.08), rgba(123,92,255,0.08));
+      border: 1px solid rgba(0,240,255,0.2);
+      border-radius: 14px; padding: 16px; text-align: center;
+    }
+    .help-card h5 { font-family: 'Orbitron', sans-serif; font-size: 0.9rem; font-weight: 700; margin-bottom: 4px; }
+    .help-card p { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 10px; }
+    .help-card a { color: var(--neon-cyan); font-size: 0.8rem; font-weight: 600; text-decoration: none; }
+    .sidebar-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.3s; z-index: 250;
+    }
+    .sidebar-overlay.show { opacity: 1; pointer-events: auto; }
+
+    /* ============ CONTAINER ============ */
+    .container {
+      position: relative; z-index: 1;
+      max-width: 1300px; margin: 0 auto;
+      padding: 30px 5% 60px;
+    }
+    .page-head { margin-bottom: 24px; }
+    .page-head h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.5rem, 3vw, 2.2rem);
+      font-weight: 800; margin-bottom: 6px;
+    }
+    .page-head h1 span {
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .page-head p { color: var(--text-dim); font-size: 0.9rem; }
+
+    /* ============ BALANCE HERO ============ */
+    .wallet-hero {
+      position: relative;
+      background: linear-gradient(135deg, rgba(0,240,255,0.12), rgba(123,92,255,0.12));
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(0,240,255,0.35);
+      border-radius: 22px;
+      padding: 32px;
       margin-bottom: 30px;
-      display: grid; grid-template-columns: 1.5fr 1fr; gap: 30px; align-items:center;
+      overflow: hidden;
       box-shadow: 0 0 50px rgba(0,240,255,0.15);
     }
-    .wallet-hero .label { font-size:0.75rem; letter-spacing:1.5px; text-transform:uppercase; color:var(--text-dim); margin-bottom:8px; }
-    .wallet-hero .amount { font-family:'Orbitron',sans-serif; font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight:900; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green)); -webkit-background-clip:text; background-clip:text; color:transparent; }
-    .wallet-hero .actions { display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap; }
-    .wallet-hero .actions .btn { padding: 12px 22px; }
+    .wallet-hero::before {
+      content: ""; position: absolute;
+      top: -50%; right: -20%;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(0,255,163,0.15), transparent 70%);
+      border-radius: 50%; pointer-events: none;
+    }
+    .wallet-hero-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 30px;
+      align-items: center;
+      position: relative;
+    }
+    .wallet-label {
+      font-size: 0.75rem;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    .wallet-amount {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 900;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+      background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green));
+      -webkit-background-clip: text; background-clip: text;
+      color: transparent;
+    }
+    .wallet-sub {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      font-weight: 400;
+    }
+    .wallet-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .wallet-actions .btn {
+      padding: 12px 22px;
+      font-size: 0.85rem;
+    }
 
-    .asset-table { width:100%; border-collapse:collapse; background:var(--bg-card); backdrop-filter:blur(18px); border:1px solid rgba(0,240,255,0.15); border-radius:18px; overflow:hidden; }
-    .asset-table thead { background:rgba(0,240,255,0.06); }
-    .asset-table th, .asset-table td { padding:14px 20px; text-align:left; font-size:0.87rem; }
-    .asset-table th { color:var(--neon-cyan); font-size:0.72rem; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; }
-    .asset-table td { border-top:1px solid rgba(0,240,255,0.08); }
-    .asset-table tr:hover td { background:rgba(0,240,255,0.04); }
-    .coin-cell { display:flex; align-items:center; gap:12px; font-weight:600; }
-    .coin-icon { width:36px; height:36px; border-radius:50%; display:grid; place-items:center; font-size:16px; font-weight:800; color:#041018; }
-    .coin-icon.btc { background: linear-gradient(135deg, #f7931a, #ffb347); }
-    .coin-icon.eth { background: linear-gradient(135deg, #627eea, #8ba7ff); }
-    .coin-icon.xrp { background: linear-gradient(135deg, #23292f, #4a5560); color:#fff; }
-    .coin-icon.rnd { background: linear-gradient(135deg, #ff2e93, #7b5cff); color:#fff; }
-    .coin-sym { color:var(--text-dim); font-size:0.75rem; font-weight:400; }
+    /* ============ SECTION HEADS ============ */
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 36px 0 18px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .section-head h2 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(1.05rem, 2vw, 1.3rem);
+      font-weight: 800;
+      letter-spacing: 0.8px;
+    }
+    .section-head a {
+      color: var(--neon-cyan);
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+    }
+    .section-head a:hover { color: var(--neon-green); }
 
-    .toast { position:fixed; top:26px; left:50%; transform:translateX(-50%) translateY(-140px); background:rgba(5,15,30,0.96); border:1px solid var(--success); border-radius:12px; padding:14px 22px; color:var(--text-main); font-size:0.9rem; box-shadow:0 0 30px rgba(0,255,163,0.4); display:flex; align-items:center; gap:10px; z-index:999; opacity:0; transition:all 0.5s cubic-bezier(0.22,1,0.36,1); }
-    .toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
-    .toast .check { width:22px; height:22px; display:grid; place-items:center; border-radius:50%; background:var(--success); color:#041018; font-weight:800; font-size:13px; }
+    /* ============ ASSET TABLE ============ */
+    .asset-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(0,240,255,0.15);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+    .asset-table thead { background: rgba(0,240,255,0.06); }
+    .asset-table th, .asset-table td {
+      padding: 14px 20px;
+      text-align: left;
+      font-size: 0.87rem;
+    }
+    .asset-table th {
+      color: var(--neon-cyan);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+    .asset-table td { border-top: 1px solid rgba(0,240,255,0.08); }
+    .asset-table tr:hover td { background: rgba(0,240,255,0.04); }
 
-    @media (max-width: 800px) {
-      .wallet-hero { grid-template-columns: 1fr; }
-      .wallet-hero .actions { justify-content: flex-start; }
+    .coin-cell { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+    .coin-icon {
+      width: 38px; height: 38px;
+      border-radius: 50%;
+      display: grid; place-items: center;
+      font-size: 16px; font-weight: 800;
+      color: #041018; flex-shrink: 0;
+    }
+    .coin-icon.btc  { background: linear-gradient(135deg, #f7931a, #ffb347); }
+    .coin-icon.eth  { background: linear-gradient(135deg, #627eea, #8ba7ff); }
+    .coin-icon.sol  { background: linear-gradient(135deg, #9945ff, #14f195); }
+    .coin-icon.bnb  { background: linear-gradient(135deg, #f0b90b, #f8d33a); }
+    .coin-icon.xrp  { background: linear-gradient(135deg, #23292f, #4a5560); color: #fff; }
+    .coin-icon.doge { background: linear-gradient(135deg, #c2a633, #e5cf6b); }
+    .coin-icon.ada  { background: linear-gradient(135deg, #0033ad, #3468d1); color: #fff; }
+    .coin-icon.avax { background: linear-gradient(135deg, #e84142, #ff6b6b); color: #fff; }
+    .coin-icon.dot  { background: linear-gradient(135deg, #e6007a, #ff4fa3); color: #fff; }
+    .coin-icon.rnd  { background: linear-gradient(135deg, #ff2e93, #7b5cff); color: #fff; box-shadow: 0 0 12px rgba(255,46,147,0.5); }
+    .coin-icon.usdt { background: linear-gradient(135deg, #26a17b, #4dd9a8); color: #fff; }
+
+    .coin-sym { color: var(--text-dim); font-size: 0.75rem; font-weight: 400; }
+
+    .empty-cell {
+      text-align: center;
+      padding: 60px 20px !important;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    .empty-cell .emoji {
+      display: block;
+      font-size: 2.6rem;
+      margin-bottom: 10px;
+      font-style: normal;
+    }
+    .empty-cell .sub {
+      display: block;
+      margin-top: 6px;
+      font-size: 0.8rem;
+      font-style: normal;
+      color: var(--text-dim);
+    }
+
+    .loading-cell {
+      text-align: center;
+      padding: 60px 20px !important;
+      color: var(--text-dim);
+    }
+    .spinner {
+      display: inline-block;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: 3px solid rgba(0,240,255,0.2);
+      border-top-color: var(--neon-cyan);
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ============ QUICK ACTIONS ============ */
+    .quick-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin-top: 20px;
+    }
+    .quick-action {
+      display: flex; align-items: center; gap: 14px;
+      padding: 18px 20px;
+      background: var(--bg-card);
+      backdrop-filter: blur(18px);
+      border: 1px solid rgba(0,240,255,0.15);
+      border-radius: 14px;
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.25s;
+    }
+    .quick-action:hover {
+      border-color: rgba(0,255,163,0.5);
+      box-shadow: 0 0 25px rgba(0,255,163,0.15);
+      transform: translateY(-2px);
+    }
+    .qa-icon {
+      width: 42px; height: 42px;
+      display: grid; place-items: center;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(0,240,255,0.15), rgba(123,92,255,0.15));
+      border: 1px solid rgba(0,240,255,0.3);
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .quick-action h4 { font-size: 0.9rem; font-weight: 600; }
+    .quick-action p { font-size: 0.75rem; color: var(--text-dim); }
+
+    /* ============ WITHDRAW NOTE ============ */
+    .info-banner {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 16px 20px;
+      background: rgba(255, 189, 46, 0.08);
+      border: 1px solid rgba(255, 189, 46, 0.3);
+      border-left: 4px solid #ffbd2e;
+      border-radius: 12px;
+      margin-top: 30px;
+      font-size: 0.85rem;
+      line-height: 1.6;
+      color: var(--text-main);
+    }
+    .info-banner .icon { font-size: 1.3rem; flex-shrink: 0; line-height: 1.2; }
+    .info-banner strong { color: #ffbd2e; }
+
+    /* ============ TOAST ============ */
+    .toast {
+      position: fixed; top: 26px; left: 50%;
+      transform: translateX(-50%) translateY(-140px);
+      background: rgba(5,15,30,0.96);
+      border: 1px solid var(--success);
+      border-radius: 12px;
+      padding: 14px 22px;
+      color: var(--text-main);
+      font-size: 0.9rem;
+      box-shadow: 0 0 30px rgba(0,255,163,0.4);
+      display: flex; align-items: center; gap: 10px;
+      z-index: 999; opacity: 0;
+      transition: all 0.5s cubic-bezier(0.22,1,0.36,1);
+      max-width: 90vw;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    .toast .check {
+      width: 22px; height: 22px;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      background: var(--success);
+      color: #041018;
+      font-weight: 800; font-size: 13px;
+      flex-shrink: 0;
+    }
+
+    /* ============ RESPONSIVE ============ */
+    @media (max-width: 900px) {
+      .wallet-hero-grid { grid-template-columns: 1fr; }
+      .wallet-actions { justify-content: flex-start; }
     }
     @media (max-width: 700px) {
-      .navbar { padding:12px 4%; }
-      .user-chip span { display:none; }
-      .container { padding:20px 4% 40px; }
-      .asset-table th:nth-child(2), .asset-table td:nth-child(2) { display:none; }
+      .navbar { padding: 12px 4%; }
+      .user-chip span { display: none; }
+      .container { padding: 20px 4% 40px; }
+      .wallet-hero { padding: 22px; }
+      .asset-table th:nth-child(2),
+      .asset-table td:nth-child(2),
+      .asset-table th:nth-child(4),
+      .asset-table td:nth-child(4) { display: none; }
+      .asset-table th, .asset-table td { padding: 12px 12px; font-size: 0.8rem; }
+    }
+    @media (max-width: 480px) {
+      .coin-icon { width: 32px; height: 32px; font-size: 13px; }
+      .quick-actions { grid-template-columns: 1fr; }
+      .wallet-actions { flex-direction: column; }
+      .wallet-actions .btn { width: 100%; text-align: center; }
     }
   </style>
 </head>
 <body>
 
+<!-- ================= NAVBAR ================= -->
 <nav class="navbar">
   <div class="nav-left">
-    <button class="hamburger" onclick="toggleSidebar()"><span></span><span></span><span></span></button>
-    <a href="dashboard.html" class="nav-brand"><div class="logo-icon">₿</div><span class="brand-gradient">NEXBIT</span></a>
+    <button class="hamburger" onclick="toggleSidebar()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <a href="dashboard.html" class="nav-brand">
+      <div class="logo-icon">₿</div>
+      <span class="brand-gradient">NEXBIT</span>
+    </a>
   </div>
   <div class="nav-actions">
-    <div class="user-chip"><div class="user-avatar" id="userAvatar">U</div><span id="userName">Trader</span></div>
+    <div class="user-chip">
+      <div class="user-avatar" id="userAvatar">U</div>
+      <span id="userName">Trader</span>
+    </div>
     <button class="btn btn-ghost" onclick="logoutUser()">Logout</button>
   </div>
 </nav>
 
+<!-- ================= SIDEBAR ================= -->
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-head">
-    <div class="logo-wrap"><div class="logo-icon">₿</div><span class="brand-gradient">NEXBIT</span></div>
+    <div class="logo-wrap">
+      <div class="logo-icon">₿</div>
+      <span class="brand-gradient">NEXBIT</span>
+    </div>
     <button class="sidebar-close" onclick="toggleSidebar()">✕</button>
   </div>
   <nav class="sidebar-menu">
@@ -127,45 +529,105 @@
     <div class="menu-divider"></div>
     <a href="#" class="menu-item" onclick="logoutUser(event)"><span class="mi-icon">🚪</span> Logout</a>
   </nav>
+  <div class="sidebar-footer">
+    <div class="help-card">
+      <div style="font-size:1.5rem; margin-bottom:6px;">🎧</div>
+      <h5>Need help?</h5>
+      <p>Our support team is online 24/7</p>
+      <a href="#">Contact Support</a>
+    </div>
+  </div>
 </aside>
 <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
+<!-- ================= MAIN ================= -->
 <div class="container">
   <div class="page-head">
     <h1>My <span>Wallet</span></h1>
     <p>Manage your crypto assets, deposits and withdrawals.</p>
   </div>
 
+  <!-- Balance Hero -->
   <div class="wallet-hero">
-    <div>
-      <div class="label">Available Balance</div>
-      <div class="amount" id="walletBalance">$0.00</div>
-      <div style="color:var(--neon-green); font-size:0.85rem; margin-top:6px;">▲ 3.24% today</div>
-    </div>
-    <div class="actions">
-      <button class="btn btn-primary" onclick="showToast('Deposit panel opening…')">💰 Deposit</button>
-      <button class="btn btn-ghost" onclick="showToast('Withdraw panel opening…')">💸 Withdraw</button>
-      <button class="btn btn-ghost" onclick="showToast('Transfer panel opening…')">↗ Transfer</button>
+    <div class="wallet-hero-grid">
+      <div>
+        <div class="wallet-label">Total Portfolio Value (USD)</div>
+        <div class="wallet-amount" id="walletBalance">$0.00</div>
+        <div class="wallet-sub" id="walletSub">Verifying your assets…</div>
+      </div>
+      <div class="wallet-actions">
+        <a href="deposit.html" class="btn btn-primary">💰 Deposit</a>
+        <a href="withdraw.html" class="btn btn-pink">💸 Withdraw</a>
+      </div>
     </div>
   </div>
 
-  <h3 style="font-family:'Orbitron',sans-serif; font-size:1.1rem; letter-spacing:0.6px; margin-bottom:14px;">Asset Balances</h3>
+  <!-- Assets Table -->
+  <div class="section-head">
+    <h2>Asset Balances</h2>
+    <a href="market.html">View markets →</a>
+  </div>
 
   <div style="overflow-x:auto;">
     <table class="asset-table">
       <thead>
         <tr>
-          <th>Asset</th><th>Balance</th><th>Value (USD)</th>
-          <th>24h Change</th><th>Action</th>
+          <th>Asset</th>
+          <th>Balance</th>
+          <th>Value (USD)</th>
+          <th>24h Change</th>
+          <th>Action</th>
         </tr>
       </thead>
-      <tbody id="assetBody"></tbody>
+      <tbody id="assetBody">
+        <!-- JS fills this -->
+      </tbody>
     </table>
   </div>
+
+  <!-- Quick Actions -->
+  <div class="section-head">
+    <h2>Quick Actions</h2>
+  </div>
+  <div class="quick-actions">
+    <a href="deposit.html" class="quick-action">
+      <div class="qa-icon">💰</div>
+      <div><h4>Deposit</h4><p>Add funds to wallet</p></div>
+    </a>
+    <a href="withdraw.html" class="quick-action">
+      <div class="qa-icon">💸</div>
+      <div><h4>Withdraw</h4><p>Send funds out</p></div>
+    </a>
+    <a href="orders.html" class="quick-action">
+      <div class="qa-icon">📋</div>
+      <div><h4>My Orders</h4><p>View history</p></div>
+    </a>
+    <a href="trade.html" class="quick-action">
+      <div class="qa-icon">💱</div>
+      <div><h4>Trade</h4><p>Buy or sell crypto</p></div>
+    </a>
+  </div>
+
+  <!-- Info banner -->
+  <div class="info-banner">
+    <span class="icon">ℹ️</span>
+    <div>
+      <strong>Heads up:</strong>
+      Deposits and withdrawals will become fully available once the Nexbit
+      wallet infrastructure is connected. Until then, this page shows only
+      balances that are actually stored in your account.
+    </div>
+  </div>
+
 </div>
 
-<div class="toast" id="toast"><span class="check">✓</span><span id="toastMsg">Done!</span></div>
+<!-- ================= TOAST ================= -->
+<div class="toast" id="toast">
+  <span class="check">✓</span>
+  <span id="toastMsg">Done!</span>
+</div>
 
+<!-- ================= SCRIPT ================= -->
 <script type="module" src="wallet.js"></script>
 </body>
 </html>
