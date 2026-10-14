@@ -125,7 +125,7 @@
     .balance-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 30px; align-items: center; position: relative; }
     .balance-label { font-size: 0.75rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 8px; font-weight: 500; }
     .balance-amount { font-family: 'Orbitron', sans-serif; font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; letter-spacing: 1px; margin-bottom: 6px; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .balance-change { color: var(--neon-green); font-size: 0.85rem; font-weight: 500; }
+    .balance-change { color: var(--text-dim); font-size: 0.82rem; font-weight: 400; }
     .balance-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
     .balance-actions .btn { padding: 11px 20px; font-size: 0.82rem; }
 
@@ -165,7 +165,7 @@
     .coin-title { font-size: 0.95rem; font-weight: 600; }
     .coin-sym { font-size: 0.75rem; color: var(--text-dim); }
     .price-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; }
-    .price-row .price { font-family: 'Orbitron', sans-serif; font-size: 1.15rem; font-weight: 700; letter-spacing: 0.5px; }
+    .price-row .price { font-family: 'Orbitron', sans-serif; font-size: 1.1rem; font-weight: 700; letter-spacing: 0.5px; }
     .change { font-size: 0.78rem; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
     .change.up { color: var(--neon-green); background: rgba(0,255,163,0.1); }
     .change.down { color: var(--danger); background: rgba(255,77,109,0.1); }
@@ -218,7 +218,7 @@
     .empty-state a { color: var(--neon-cyan); text-decoration: none; font-weight: 600; }
     .empty-state a:hover { color: var(--neon-green); }
 
-    /* ============ RND FEATURED ============ */
+    /* ============ RND FEATURED (LIVE) ============ */
     .rnd-featured {
       position: relative; margin-top: 40px;
       background: linear-gradient(135deg, rgba(255,46,147,0.15), rgba(123,92,255,0.15));
@@ -227,7 +227,6 @@
       display: grid; grid-template-columns: 1.5fr 1fr;
       gap: 30px; align-items: center; overflow: hidden;
       box-shadow: 0 0 50px rgba(255,46,147,0.15);
-      text-decoration: none; color: inherit;
       transition: all 0.3s;
     }
     .rnd-featured:hover { transform: translateY(-4px); box-shadow: 0 0 70px rgba(255,46,147,0.3); border-color: rgba(255,46,147,0.7); }
@@ -250,6 +249,42 @@
     .rnd-stats { display: flex; gap: 24px; flex-wrap: wrap; }
     .rnd-stat-label { font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); margin-bottom: 4px; }
     .rnd-stat-value { font-family: 'Orbitron', sans-serif; font-size: 1rem; font-weight: 700; color: var(--neon-green); }
+    .rnd-stat-value.muted { color: var(--text-dim); font-size: 0.85rem; }
+    #rndChange[data-direction="up"]   { color: var(--neon-green); }
+    #rndChange[data-direction="down"] { color: var(--danger); }
+
+    .rnd-buttons { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+    .btn-rnd {
+      padding: 11px 22px;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      letter-spacing: 0.4px;
+      transition: all 0.25s;
+      display: inline-block;
+      white-space: nowrap;
+    }
+    .btn-rnd.buy {
+      background: linear-gradient(90deg, var(--neon-green), #00d484);
+      color: #041018;
+      box-shadow: 0 0 22px rgba(0, 255, 163, 0.4);
+    }
+    .btn-rnd.buy:hover {
+      box-shadow: 0 0 34px rgba(0, 255, 163, 0.7);
+      transform: translateY(-2px);
+    }
+    .btn-rnd.sell {
+      background: linear-gradient(90deg, var(--danger), #d63450);
+      color: #fff;
+      box-shadow: 0 0 22px rgba(255, 77, 109, 0.4);
+    }
+    .btn-rnd.sell:hover {
+      box-shadow: 0 0 34px rgba(255, 77, 109, 0.7);
+      transform: translateY(-2px);
+    }
+    .rnd-updated { font-size: 0.72rem; color: var(--text-dim); margin-top: 12px; }
+
     .rnd-right { text-align: center; position: relative; z-index: 1; }
     .rnd-logo {
       width: 100px; height: 100px; margin: 0 auto 16px;
@@ -261,6 +296,16 @@
       animation: floatRnd 3s ease-in-out infinite;
     }
     @keyframes floatRnd { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+    .verified-badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      color: var(--neon-green);
+      margin-top: 6px;
+      padding: 4px 10px;
+      background: rgba(0,255,163,0.1);
+      border: 1px solid rgba(0,255,163,0.3);
+      border-radius: 20px;
+    }
 
     /* ============ QUICK ACTIONS ============ */
     .quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 40px; }
@@ -290,6 +335,13 @@
     .tx-type.sell { color: var(--danger); background: rgba(255,77,109,0.1); }
     .tx-type.dep  { color: var(--neon-cyan); background: rgba(0,240,255,0.1); }
 
+    #txBody td[colspan] {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+
     /* ============ TOAST ============ */
     .toast { position: fixed; top: 26px; left: 50%; transform: translateX(-50%) translateY(-140px); background: rgba(5,15,30,0.96); border: 1px solid var(--success); border-radius: 12px; padding: 14px 22px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 0 30px rgba(0,255,163,0.4); display: flex; align-items: center; gap: 10px; z-index: 999; opacity: 0; transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1); max-width: 90vw; }
     .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
@@ -302,6 +354,7 @@
       .rnd-featured { grid-template-columns: 1fr; text-align: center; }
       .rnd-featured p { margin-left: auto; margin-right: auto; }
       .rnd-stats { justify-content: center; }
+      .rnd-buttons { justify-content: center; }
     }
     @media (max-width: 700px) {
       .navbar { padding: 12px 4%; }
@@ -314,11 +367,12 @@
     @media (max-width: 480px) {
       .coins-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
       .coin-card { padding: 16px 14px; }
-      .price-row .price { font-size: 1rem; }
+      .price-row .price { font-size: 0.95rem; }
       .coin-icon { width: 34px; height: 34px; font-size: 15px; }
       .quick-actions { grid-template-columns: 1fr; }
       .rnd-logo { width: 80px; height: 80px; font-size: 2rem; }
       .my-tokens-grid { grid-template-columns: 1fr; }
+      .btn-rnd { flex: 1 1 auto; text-align: center; }
     }
   </style>
 </head>
@@ -393,7 +447,7 @@
       <div>
         <div class="balance-label">Total Portfolio Value</div>
         <div class="balance-amount" id="balanceAmount">$0.00</div>
-        <div class="balance-change" id="balanceChange">▲ $0.00 (0.00%) today</div>
+        <div class="balance-change" id="balanceChange">Verifying…</div>
       </div>
       <div class="balance-actions">
         <a href="wallet.html" class="btn btn-primary">💰 Deposit</a>
@@ -422,29 +476,55 @@
     <!-- JS fills this -->
   </div>
 
-  <!-- ================= RND FEATURED ================= -->
-  <a href="trade.html?coin=RND" class="rnd-featured">
+  <!-- ================= RND FEATURED (LIVE) ================= -->
+  <div class="rnd-featured">
     <div>
-      <span class="rnd-badge">🔥 New Listing — Featured Token</span>
-      <h2><span class="grad">RND Token</span> is Now Live!</h2>
+      <span class="rnd-badge">🔥 Live on PancakeSwap (BSC)</span>
+      <h2><span class="grad">RND Token</span> — Real Market Data</h2>
       <p>
-        RND (Random Network Dollar) — Nexbit पर नया listed token। Innovative DeFi protocol,
-        community-driven governance और high-yield staking opportunities के साथ। अभी trade करें
-        और early-adopter rewards पाएँ।
+        RND (Random Network Dollar) — BSC blockchain पर PancakeSwap पर live trade हो रहा है।
+        नीचे देखें real-time price, 24h change, volume और liquidity। खरीदने-बेचने के लिए
+        direct PancakeSwap पर जाएँ।
       </p>
+
       <div class="rnd-stats">
-        <div><div class="rnd-stat-label">Price</div><div class="rnd-stat-value">$1.247</div></div>
-        <div><div class="rnd-stat-label">24h Change</div><div class="rnd-stat-value">+18.42%</div></div>
-        <div><div class="rnd-stat-label">Market Cap</div><div class="rnd-stat-value">$124.7M</div></div>
-        <div><div class="rnd-stat-label">Volume</div><div class="rnd-stat-value">$8.3M</div></div>
+        <div>
+          <div class="rnd-stat-label">Price (USD)</div>
+          <div class="rnd-stat-value" id="rndPrice">Loading…</div>
+        </div>
+        <div>
+          <div class="rnd-stat-label">24h Change</div>
+          <div class="rnd-stat-value" id="rndChange">—</div>
+        </div>
+        <div>
+          <div class="rnd-stat-label">24h Volume</div>
+          <div class="rnd-stat-value" id="rndVolume">—</div>
+        </div>
+        <div>
+          <div class="rnd-stat-label">Liquidity</div>
+          <div class="rnd-stat-value" id="rndLiquidity">—</div>
+        </div>
+      </div>
+
+      <div class="rnd-updated" id="rndUpdated"></div>
+
+      <div class="rnd-buttons">
+        <a href="https://pancakeswap.finance/swap?chain=bsc&outputCurrency=0xcF1FbF18bE9202865bcf88E6349B9D207F75942d"
+           target="_blank" rel="noopener noreferrer"
+           class="btn-rnd buy">🟢 Buy on PancakeSwap</a>
+        <a href="https://pancakeswap.finance/swap?chain=bsc&inputCurrency=0xcF1FbF18bE9202865bcf88E6349B9D207F75942d"
+           target="_blank" rel="noopener noreferrer"
+           class="btn-rnd sell">🔴 Sell on PancakeSwap</a>
       </div>
     </div>
+
     <div class="rnd-right">
       <div class="rnd-logo">R</div>
       <div style="font-family:'Orbitron',sans-serif; font-size:1.3rem; font-weight:800; letter-spacing:1px;">RND</div>
       <div style="font-size:0.8rem; color:var(--text-dim); margin-top:4px;">Random Network Dollar</div>
+      <div class="verified-badge">✅ Verified BSC Token</div>
     </div>
-  </a>
+  </div>
 
   <!-- ================= QUICK ACTIONS ================= -->
   <div class="section-head">
