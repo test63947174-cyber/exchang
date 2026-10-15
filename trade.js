@@ -1,14 +1,13 @@
 /* =========================================================
    Nexbit — Trade Page
    File: trade.js
-   Version: 4.0 (Real Internal Order Engine)
+   Version: 5.0 (Market + Limit orders, real internal engine)
 
    FEATURES:
    - Live chart (TradingView Lightweight Charts)
    - Internal order book (from Firebase, not Binance)
-   - Real order placement via engine.js
+   - Real order placement via engine.js — Market + Limit
    - Balance-aware Buy/Sell with locked/available
-   - Cancel from Orders page
    - Recent trades feed
    - Real-time order book refresh
 
@@ -63,9 +62,9 @@ const INTERNAL_TRADING_PAIRS = {
   BTC: "BTCUSDT"
 };
 
-const PRICE_REFRESH_MS   = 30_000;
+const PRICE_REFRESH_MS     = 30_000;
 const ORDERBOOK_REFRESH_MS = 3_000;
-const TRADES_REFRESH_MS   = 5_000;
+const TRADES_REFRESH_MS    = 5_000;
 
 /* =========================================================
    3. COIN CONFIG
@@ -88,6 +87,9 @@ let currentPrice   = null;
 let currentUser    = null;
 let currentTF      = "1m";
 
+/* Order type per side (buy/sell): "limit" | "market" */
+const orderType = { buy: "limit", sell: "limit" };
+
 /* Balances for the currently selected asset pair */
 let balanceBase   = { available: 0, locked: 0 };   // e.g. BTC
 let balanceQuote  = { available: 0, locked: 0 };   // e.g. USDT
@@ -99,12 +101,12 @@ let volumeSeries = null;
 let chartReady   = false;
 
 /* Timers / WS */
-let priceTimer     = null;
-let obTimer        = null;
-let tradesTimer    = null;
-let binanceWS      = null;
+let priceTimer  = null;
+let obTimer     = null;
+let tradesTimer = null;
+let binanceWS   = null;
 
-let pricesFetched  = false;
+let pricesFetched = false;
 
 const FEE_RATE = 0.001;
 
@@ -228,11 +230,15 @@ function updateCoinUI() {
     }
   }
 
-  const buyPriceEl  = getElement("buyPrice");
-  const sellPriceEl = getElement("sellPrice");
-  const priceText = priceReady ? "$" + formatPrice(price) : "—";
-  if (buyPriceEl)  buyPriceEl.textContent  = priceText;
-  if (sellPriceEl) sellPriceEl.textContent = priceText;
+  /* Prefill limit price input with live price if empty */
+  const buyPriceInp  = getElement("buyPrice");
+  const sellPriceInp = getElement("sellPrice");
+  if (buyPriceInp && !buyPriceInp.value && priceReady) {
+    buyPriceInp.value = price.toFixed(2);
+  }
+  if (sellPriceInp && !sellPriceInp.value && priceReady) {
+    sellPriceInp.value = price.toFixed(2);
+  }
 
   renderRNDMode(coin);
   updateBalanceLabels();
@@ -315,9 +321,7 @@ function renderRNDMode(coin) {
 
 /* Show available / locked balances above amount input */
 function updateBalanceLabels() {
-  const buyInput = getElement("buyAmount");
-  const sellInput = getElement("sellAmount");
-  const formBuy = getElement("formBuy");
+  const formBuy  = getElement("formBuy");
   const formSell = getElement("formSell");
 
   if (formBuy) {
@@ -446,7 +450,6 @@ async function loadChartData(symbol, interval) {
     candleSeries.setData(candles);
     volumeSeries.setData(volumes);
     chart.timeScale().fitContent();
-
   } catch (err) {
     console.warn("Chart data load failed:", err);
   }
@@ -610,10 +613,8 @@ async function refreshRecentTrades() {
 }
 
 function renderRecentTrades(trades) {
-  /* We'll add a small "recent trades" area under order book if it exists */
   let container = getElement("recentTradesContent");
   if (!container) {
-    /* Create it if not present */
     const obCard = document.querySelector(".orderbook-card");
     if (!obCard) return;
     const wrap = document.createElement("div");
@@ -631,12 +632,21 @@ function renderRecentTrades(trades) {
     return;
   }
 
-  container.innerHTML = trades.map(t => `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 6px;font-size:0.72rem;font-family:'Courier New',monospace;border-radius:4px;">
-      <span style="color:var(--neon-green);font-weight:700;">${formatPrice(t.price)}</span>
-      <span style="color:var(--text-dim);text-align:right;">${formatAmount(t.quantity)} BTC</span>
-    </div>
-  `).join("");
+  container.innerHTML = trades.map(t => {
+    /* Color by taker side: buyer-initiated = green */
+    const isBuyerMaker = t.side === "buy" ? false : true;
+    const color = isBuyerMaker ? "var(--danger)" : "var(--neon-green)";
+    const ts = t.executedAt
+      ? new Date(t.executedAt).toLocaleTimeString("en-US", { hour12: false })
+      : "";
+    return `
+      <div style="display:grid;grid-template-columns:1fr 1fr 60px;gap:6px;padding:4px 6px;font-size:0.72rem;font-family:'Courier New',monospace;border-radius:4px;">
+        <span style="color:${color};font-weight:700;">${formatPrice(t.price)}</span>
+        <span style="color:var(--text-dim);text-align:right;">${formatAmount(t.quantity)}</span>
+        <span style="color:var(--text-dim);text-align:right;font-size:0.65rem;">${ts}</span>
+      </div>
+    `;
+  }).join("");
 }
 
 /* =========================================================
@@ -726,7 +736,7 @@ function startPriceRefresh() {
 async function loadBalances() {
   if (!currentUser) return;
 
-  const baseAsset  = currentCoin;      // BTC
+  const baseAsset  = currentCoin;
   const quoteAsset = "USDT";
 
   try {
@@ -758,8 +768,10 @@ function subscribeBalances() {
 }
 
 /* =========================================================
-   14. TABS + AMOUNT HELPERS
+   14. TABS + ORDER TYPE + AMOUNT HELPERS
    ========================================================= */
+
+/* Buy/Sell tab switch */
 window.switchTradeTab = (mode) => {
   const tabBuy  = getElement("tabBuy");
   const tabSell = getElement("tabSell");
@@ -780,6 +792,34 @@ window.switchTradeTab = (mode) => {
   }
 };
 
+/* Order type switch (limit / market) */
+window.switchOrderType = (side, type) => {
+  orderType[side] = type;
+
+  const form = getElement(side === "buy" ? "formBuy" : "formSell");
+  if (!form) return;
+
+  form.querySelectorAll(".order-type-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.type === type);
+  });
+
+  const limitLabel = getElement(side === "buy" ? "buyLimitLabel" : "sellLimitLabel");
+  const limitRow   = getElement(side === "buy" ? "buyLimitRow"   : "sellLimitRow");
+  const showLimit  = type === "limit";
+
+  if (limitLabel) limitLabel.style.display = showLimit ? "" : "none";
+  if (limitRow)   limitRow.style.display   = showLimit ? "" : "none";
+
+  /* Prefill limit price with current market price if empty */
+  const priceInput = getElement(side === "buy" ? "buyPrice" : "sellPrice");
+  if (showLimit && priceInput && !priceInput.value && Number.isFinite(currentPrice)) {
+    priceInput.value = currentPrice.toFixed(2);
+  }
+
+  updateCalc(side);
+};
+
+/* Quick amount buttons */
 window.quickAmt = (mode, val) => {
   const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!inp) return;
@@ -787,6 +827,7 @@ window.quickAmt = (mode, val) => {
   updateCalc(mode);
 };
 
+/* MAX button */
 window.setMax = (mode) => {
   const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!inp) return;
@@ -796,7 +837,6 @@ window.setMax = (mode) => {
       showToast("No USDT available.", false);
       return;
     }
-    /* MAX = available / (1 + fee) to leave room for fee */
     const max = balanceQuote.available / (1 + FEE_RATE);
     inp.value = Math.floor(max * 100) / 100;
   } else {
@@ -804,30 +844,52 @@ window.setMax = (mode) => {
       showToast(`No ${currentCoin} available.`, false);
       return;
     }
-    /* Sell — MAX in USD = available BTC × price */
-    const max = balanceBase.available * (currentPrice || 0);
+    /* Effective price for sell */
+    let effPrice = currentPrice;
+    if (orderType.sell === "limit") {
+      const priceEl = getElement("sellPrice");
+      const p = parseFloat(priceEl?.value || "0");
+      if (Number.isFinite(p) && p > 0) effPrice = p;
+    }
+    const max = balanceBase.available * (effPrice || 0);
     inp.value = Math.floor(max * 100) / 100;
   }
   updateCalc(mode);
 };
 
+/* Effective price used for calculations */
+function getEffectivePrice(mode) {
+  const type = orderType[mode];
+  if (type === "limit") {
+    const el = getElement(mode === "buy" ? "buyPrice" : "sellPrice");
+    const p = parseFloat(el?.value || "0");
+    return Number.isFinite(p) && p > 0 ? p : 0;
+  }
+  return Number.isFinite(currentPrice) ? currentPrice : 0;
+}
+
+/* Update preview values inside order form */
 function updateCalc(mode) {
   const amountEl = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!amountEl) return;
 
   const amount = parseFloat(amountEl.value) || 0;
-  const price  = Number.isFinite(currentPrice) ? currentPrice : 0;
+  const price  = getEffectivePrice(mode);
 
-  const receiveEl = getElement(mode === "buy" ? "buyReceive" : "sellGive");
-  const feeEl     = getElement(mode === "buy" ? "buyFee"     : "sellFee");
-  const totalEl   = getElement(mode === "buy" ? "buyTotal"   : "sellTotal");
+  const receiveEl = getElement(mode === "buy" ? "buyReceive"     : "sellGive");
+  const priceEl2  = getElement(mode === "buy" ? "buyMarketPrice" : "sellMarketPrice");
+  const feeEl     = getElement(mode === "buy" ? "buyFee"         : "sellFee");
+  const totalEl   = getElement(mode === "buy" ? "buyTotal"       : "sellTotal");
 
-  if (!price) {
+  if (!price || !Number.isFinite(price)) {
+    if (priceEl2)  priceEl2.textContent  = "—";
     if (receiveEl) receiveEl.textContent = "—";
     if (feeEl)     feeEl.textContent     = "—";
-    if (totalEl)   totalEl.textContent   = "Price loading…";
+    if (totalEl)   totalEl.textContent   = "Price unavailable";
     return;
   }
+
+  if (priceEl2) priceEl2.textContent = "$" + formatPrice(price);
 
   if (amount <= 0) {
     if (receiveEl) receiveEl.textContent = `0.00000000 ${currentCoin}`;
@@ -837,6 +899,7 @@ function updateCalc(mode) {
   }
 
   const fee = amount * FEE_RATE;
+
   if (mode === "buy") {
     if (receiveEl) receiveEl.textContent = (amount / price).toFixed(8) + " " + currentCoin;
     if (feeEl) feeEl.textContent = "$" + fee.toFixed(2);
@@ -849,11 +912,11 @@ function updateCalc(mode) {
 }
 
 /* =========================================================
-   15. EXECUTE TRADE — real order placement
+   15. EXECUTE TRADE — Market + Limit
    ========================================================= */
 window.executeTrade = async (mode) => {
-  const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
-  if (!inp) return;
+  const amountEl = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
+  if (!amountEl) return;
 
   /* Only BTC is internal-trading enabled for now */
   if (!(currentCoin in INTERNAL_TRADING_PAIRS)) {
@@ -861,12 +924,26 @@ window.executeTrade = async (mode) => {
     return;
   }
 
-  const amountUSD = parseFloat(inp.value) || 0;
+  const amountUSD = parseFloat(amountEl.value) || 0;
+  const type = orderType[mode];  // "limit" | "market"
 
-  if (!pricesFetched || !Number.isFinite(currentPrice) || currentPrice <= 0) {
-    showToast("Price is still loading. Please wait…", false);
-    return;
+  /* Determine effective price for pre-check */
+  let orderPrice;
+  if (type === "limit") {
+    const priceEl = getElement(mode === "buy" ? "buyPrice" : "sellPrice");
+    orderPrice = parseFloat(priceEl?.value || "0");
+    if (!Number.isFinite(orderPrice) || orderPrice <= 0) {
+      showToast("Enter a valid limit price.", false);
+      return;
+    }
+  } else {
+    if (!pricesFetched || !Number.isFinite(currentPrice) || currentPrice <= 0) {
+      showToast("Market price not available yet.", false);
+      return;
+    }
+    orderPrice = currentPrice;
   }
+
   if (amountUSD <= 0) {
     showToast("Enter a valid amount.", false);
     return;
@@ -876,14 +953,14 @@ window.executeTrade = async (mode) => {
     return;
   }
 
-  /* Compute base asset quantity from USD */
-  const quantity = Number((amountUSD / currentPrice).toFixed(8));
+  /* Compute quantity from USD / price */
+  const quantity = Number((amountUSD / orderPrice).toFixed(8));
   if (quantity <= 0) {
     showToast("Quantity too small.", false);
     return;
   }
 
-  /* ---------- Balance pre-check (client hint only) ---------- */
+  /* ---------- Client-side pre-check (hint only) ---------- */
   if (mode === "buy") {
     const needed = amountUSD * (1 + FEE_RATE);
     if (needed > balanceQuote.available) {
@@ -902,20 +979,18 @@ window.executeTrade = async (mode) => {
   const origText = btn ? btn.textContent : "";
   if (btn) {
     btn.disabled = true;
-    btn.textContent = mode === "buy" ? "Placing Buy…" : "Placing Sell…";
+    btn.textContent = `Placing ${type} ${mode}…`;
   }
 
   try {
-    /* Ensure wallets exist first time */
     await engine.ensureWallets(currentUser.uid);
 
-    /* Place order via engine */
     const result = await engine.placeOrder({
       uid: currentUser.uid,
-      pair: INTERNAL_TRADING_PAIRS[currentCoin],   // "BTCUSDT"
+      pair: INTERNAL_TRADING_PAIRS[currentCoin],
       side: mode,
-      type: "limit",
-      price: currentPrice,
+      type,                     // "limit" | "market"
+      price: orderPrice,        // used by limit, ignored by market
       quantity
     });
 
@@ -925,23 +1000,23 @@ window.executeTrade = async (mode) => {
 
     if (status === "filled") {
       showToast(
-        `✅ Order filled: ${filled.toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
+        `✅ Filled: ${filled.toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
         true
       );
     } else if (status === "partial") {
       showToast(
-        `⚡ Partially filled: ${filled.toFixed(8)} / ${Number(result.quantity).toFixed(8)} ${currentCoin}`,
+        `⚡ Partial: ${filled.toFixed(8)} / ${Number(result.quantity).toFixed(8)} ${currentCoin}`,
         true
       );
     } else {
       showToast(
-        `📋 Order placed (open): ${Number(result.quantity).toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
+        `📋 ${type.toUpperCase()} order placed: ${Number(result.quantity).toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
         true
       );
     }
 
-    /* Clear input */
-    inp.value = "";
+    /* Clear amount only (keep limit price for convenience) */
+    amountEl.value = "";
     updateCalc(mode);
 
     /* Refresh UI */
@@ -1018,21 +1093,17 @@ onAuthStateChanged(auth, async (user) => {
   loadCoinFromURL();
   updateCoinUI();
 
-  /* Start price fetching */
   startPriceRefresh();
 
-  /* Load balances + subscribe */
   await engine.ensureWallets(user.uid);
   await loadBalances();
   subscribeBalances();
 
-  /* Init chart */
   setTimeout(() => {
     if (initChart()) {
       reloadChartAndBook();
     }
 
-    /* Periodic refresh for order book + trades */
     if (obTimer) clearInterval(obTimer);
     obTimer = setInterval(refreshOrderBook, ORDERBOOK_REFRESH_MS);
 
@@ -1045,12 +1116,33 @@ onAuthStateChanged(auth, async (user) => {
    19. INIT
    ========================================================= */
 document.addEventListener("DOMContentLoaded", () => {
-  const buyInp  = getElement("buyAmount");
-  const sellInp = getElement("sellAmount");
-  if (buyInp)  buyInp.addEventListener("input",  () => updateCalc("buy"));
-  if (sellInp) sellInp.addEventListener("input", () => updateCalc("sell"));
+  const buyInp   = getElement("buyAmount");
+  const sellInp  = getElement("sellAmount");
+  const buyPrice = getElement("buyPrice");
+  const sellPrice= getElement("sellPrice");
+
+  if (buyInp)   buyInp.addEventListener("input",   () => updateCalc("buy"));
+  if (sellInp)  sellInp.addEventListener("input",  () => updateCalc("sell"));
+  if (buyPrice) buyPrice.addEventListener("input", () => updateCalc("buy"));
+  if (sellPrice)sellPrice.addEventListener("input",() => updateCalc("sell"));
+
+  /* Set initial order type state on forms */
+  switchOrderType("buy", "limit");
+  switchOrderType("sell", "limit");
 
   bindTimeframeButtons();
+
+  /* Keep trying to fill limit price inputs once prices arrive */
+  const fillInterval = setInterval(() => {
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
+    const bp = getElement("buyPrice");
+    const sp = getElement("sellPrice");
+    if (bp && !bp.value) bp.value = currentPrice.toFixed(2);
+    if (sp && !sp.value) sp.value = currentPrice.toFixed(2);
+    updateCalc("buy");
+    updateCalc("sell");
+  }, 1500);
+  setTimeout(() => clearInterval(fillInterval), 20000);
 });
 
 window.addEventListener("beforeunload", () => {
