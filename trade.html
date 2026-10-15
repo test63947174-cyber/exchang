@@ -21,6 +21,7 @@
       --text-dim: #8b9bc0;
       --danger: #ff4d6d;
       --success: #00ffa3;
+      --warning: #ffbd2e;
     }
     html { scroll-behavior: smooth; }
     body {
@@ -296,11 +297,9 @@
     }
     .ob-row .price { font-weight: 700; }
     .ob-row .amount { text-align: right; color: var(--text-dim); }
-
     .ob-row.ask .price { color: var(--danger); }
     .ob-row.bid .price { color: var(--neon-green); }
 
-    /* Depth bar background */
     .ob-row .depth-bar {
       position: absolute;
       top: 0; bottom: 0;
@@ -309,14 +308,8 @@
       pointer-events: none;
       transition: width 0.3s ease;
     }
-    .ob-row.ask .depth-bar {
-      right: 0;
-      background: var(--danger);
-    }
-    .ob-row.bid .depth-bar {
-      right: 0;
-      background: var(--neon-green);
-    }
+    .ob-row.ask .depth-bar { right: 0; background: var(--danger); }
+    .ob-row.bid .depth-bar { right: 0; background: var(--neon-green); }
 
     .ob-separator {
       display: flex; align-items: center; justify-content: center;
@@ -371,7 +364,7 @@
       background: rgba(5,10,25,0.7);
       border: 1px solid rgba(0,240,255,0.15);
       border-radius: 12px; padding: 5px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
     }
     .trade-tab {
       flex: 1; padding: 10px;
@@ -394,6 +387,34 @@
 
     .trade-form { display: none; }
     .trade-form.active { display: block; }
+
+    /* Order type (Market/Limit) */
+    .order-type-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+      background: rgba(5,10,25,0.5);
+      padding: 4px;
+      border-radius: 10px;
+      border: 1px solid rgba(0,240,255,0.12);
+    }
+    .order-type-btn {
+      flex: 1;
+      padding: 8px 12px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-family: inherit;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .order-type-btn.active {
+      background: rgba(0,240,255,0.12);
+      color: var(--neon-cyan);
+    }
 
     .form-label {
       display: flex; justify-content: space-between; align-items: center;
@@ -483,13 +504,16 @@
       color: #041018;
       box-shadow: 0 0 24px rgba(0,255,163,0.4);
     }
-    .btn-buy:hover { box-shadow: 0 0 38px rgba(0,255,163,0.7); transform: translateY(-2px); }
+    .btn-buy:hover:not(:disabled) { box-shadow: 0 0 38px rgba(0,255,163,0.7); transform: translateY(-2px); }
     .btn-sell {
       background: linear-gradient(90deg, var(--danger), #d63450);
       color: #fff;
       box-shadow: 0 0 24px rgba(255,77,109,0.4);
     }
-    .btn-sell:hover { box-shadow: 0 0 38px rgba(255,77,109,0.7); transform: translateY(-2px); }
+    .btn-sell:hover:not(:disabled) { box-shadow: 0 0 38px rgba(255,77,109,0.7); transform: translateY(-2px); }
+    .btn-buy:disabled, .btn-sell:disabled {
+      opacity: 0.6; cursor: not-allowed; transform: none;
+    }
 
     /* Toast */
     .toast {
@@ -639,8 +663,23 @@
           <button class="trade-tab sell" id="tabSell" onclick="switchTradeTab('sell')">Sell</button>
         </div>
 
-        <!-- BUY -->
+        <!-- BUY FORM -->
         <div class="trade-form active" id="formBuy">
+          <!-- Order type selector -->
+          <div class="order-type-tabs">
+            <button type="button" class="order-type-btn active" data-type="limit" onclick="switchOrderType('buy','limit')">Limit</button>
+            <button type="button" class="order-type-btn" data-type="market" onclick="switchOrderType('buy','market')">Market</button>
+          </div>
+
+          <!-- Limit price (hidden in market mode) -->
+          <div class="form-label" id="buyLimitLabel">
+            <span>Limit Price (USDT)</span>
+          </div>
+          <div class="amount-row" id="buyLimitRow">
+            <input type="number" id="buyPrice" placeholder="0.00" step="0.01" min="0" />
+            <span class="unit">USDT</span>
+          </div>
+
           <div class="form-label">
             <span>Amount (USD)</span>
             <button class="max-btn" onclick="setMax('buy')">MAX</button>
@@ -658,16 +697,29 @@
 
           <div class="order-info">
             <div class="row"><span>You'll receive</span><span id="buyReceive">—</span></div>
-            <div class="row"><span>Market Price</span><span id="buyPrice">—</span></div>
+            <div class="row"><span>Order Price</span><span id="buyMarketPrice">—</span></div>
             <div class="row"><span>Fee (est. 0.1%)</span><span id="buyFee">—</span></div>
             <div class="row total"><span>Total</span><span id="buyTotal">—</span></div>
           </div>
 
-          <button class="btn-buy" onclick="executeTrade('buy')">Buy Now</button>
+          <button class="btn-buy" onclick="executeTrade('buy')">Place Buy Order</button>
         </div>
 
-        <!-- SELL -->
+        <!-- SELL FORM -->
         <div class="trade-form" id="formSell">
+          <div class="order-type-tabs">
+            <button type="button" class="order-type-btn active" data-type="limit" onclick="switchOrderType('sell','limit')">Limit</button>
+            <button type="button" class="order-type-btn" data-type="market" onclick="switchOrderType('sell','market')">Market</button>
+          </div>
+
+          <div class="form-label" id="sellLimitLabel">
+            <span>Limit Price (USDT)</span>
+          </div>
+          <div class="amount-row" id="sellLimitRow">
+            <input type="number" id="sellPrice" placeholder="0.00" step="0.01" min="0" />
+            <span class="unit">USDT</span>
+          </div>
+
           <div class="form-label">
             <span>Amount (USD)</span>
             <button class="max-btn" onclick="setMax('sell')">MAX</button>
@@ -685,12 +737,12 @@
 
           <div class="order-info">
             <div class="row"><span>You'll give</span><span id="sellGive">—</span></div>
-            <div class="row"><span>Market Price</span><span id="sellPrice">—</span></div>
+            <div class="row"><span>Order Price</span><span id="sellMarketPrice">—</span></div>
             <div class="row"><span>Fee (est. 0.1%)</span><span id="sellFee">—</span></div>
             <div class="row total"><span>You'll receive</span><span id="sellTotal">—</span></div>
           </div>
 
-          <button class="btn-sell" onclick="executeTrade('sell')">Sell Now</button>
+          <button class="btn-sell" onclick="executeTrade('sell')">Place Sell Order</button>
         </div>
       </div>
 
@@ -698,11 +750,15 @@
   </div>
 </div>
 
-<div class="toast" id="toast"><span class="check">✓</span><span id="toastMsg">Done!</span></div>
+<!-- ================= TOAST ================= -->
+<div class="toast" id="toast">
+  <span class="check">✓</span>
+  <span id="toastMsg">Done!</span>
+</div>
 
-<!-- TradingView Lightweight Charts -->
+<!-- ================= SCRIPTS ================= -->
 <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-
 <script type="module" src="trade.js"></script>
+
 </body>
 </html>
