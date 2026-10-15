@@ -1,6 +1,7 @@
 /* =========================================================
    Nexbit Exchange — Dashboard
    File: dashboard.js
+   Version: 2.2 (Deposit + Withdraw sidebar updated)
 
    Features:
    - Live public market prices from Binance Spot API
