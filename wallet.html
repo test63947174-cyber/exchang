@@ -338,13 +338,13 @@
     .coin-icon.bnb  { background: linear-gradient(135deg, #f0b90b, #f8d33a); }
     .coin-icon.xrp  { background: linear-gradient(135deg, #23292f, #4a5560); color: #fff; }
     .coin-icon.doge { background: linear-gradient(135deg, #c2a633, #e5cf6b); }
-    .coin-icon.ada  { background: linear-gradient(135deg, #0033ad, #3468d1); color: #fff; }
-    .coin-icon.avax { background: linear-gradient(135deg, #e84142, #ff6b6b); color: #fff; }
-    .coin-icon.dot  { background: linear-gradient(135deg, #e6007a, #ff4fa3); color: #fff; }
     .coin-icon.rnd  { background: linear-gradient(135deg, #ff2e93, #7b5cff); color: #fff; box-shadow: 0 0 12px rgba(255,46,147,0.5); }
     .coin-icon.usdt { background: linear-gradient(135deg, #26a17b, #4dd9a8); color: #fff; }
 
     .coin-sym { color: var(--text-dim); font-size: 0.75rem; font-weight: 400; }
+
+    .price-up   { color: var(--neon-green); font-weight: 600; }
+    .price-down { color: var(--danger); font-weight: 600; }
 
     .empty-cell {
       text-align: center;
@@ -417,7 +417,7 @@
     .quick-action h4 { font-size: 0.9rem; font-weight: 600; }
     .quick-action p { font-size: 0.75rem; color: var(--text-dim); }
 
-    /* ============ WITHDRAW NOTE ============ */
+    /* ============ INFO BANNER ============ */
     .info-banner {
       display: flex;
       gap: 14px;
@@ -519,11 +519,15 @@
   </div>
   <nav class="sidebar-menu">
     <a href="dashboard.html"  class="menu-item"><span class="mi-icon">🏠</span> Dashboard</a>
+    <a href="deposit.html"    class="menu-item"><span class="mi-icon">📥</span> Deposit</a>
+    <a href="withdraw.html"   class="menu-item"><span class="mi-icon">📤</span> Withdraw</a>
+    <div class="menu-divider"></div>
     <a href="market.html"     class="menu-item"><span class="mi-icon">📈</span> Markets</a>
     <a href="trade.html"      class="menu-item"><span class="mi-icon">💱</span> Trade</a>
     <a href="wallet.html"     class="menu-item active"><span class="mi-icon">💰</span> Wallet</a>
     <a href="orders.html"     class="menu-item"><span class="mi-icon">📋</span> Orders</a>
     <a href="list-token.html" class="menu-item"><span class="mi-icon">🚀</span> List Token</a>
+    <div class="menu-divider"></div>
     <a href="profile.html"    class="menu-item"><span class="mi-icon">👤</span> Profile</a>
     <a href="settings.html"   class="menu-item"><span class="mi-icon">⚙️</span> Settings</a>
     <div class="menu-divider"></div>
@@ -580,7 +584,12 @@
         </tr>
       </thead>
       <tbody id="assetBody">
-        <!-- JS fills this -->
+        <tr>
+          <td colspan="5" class="loading-cell">
+            <div class="spinner"></div>
+            <div>Loading your wallet…</div>
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -591,11 +600,11 @@
   </div>
   <div class="quick-actions">
     <a href="deposit.html" class="quick-action">
-      <div class="qa-icon">💰</div>
+      <div class="qa-icon">📥</div>
       <div><h4>Deposit</h4><p>Add funds to wallet</p></div>
     </a>
     <a href="withdraw.html" class="quick-action">
-      <div class="qa-icon">💸</div>
+      <div class="qa-icon">📤</div>
       <div><h4>Withdraw</h4><p>Send funds out</p></div>
     </a>
     <a href="orders.html" class="quick-action">
