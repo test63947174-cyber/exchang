@@ -1,23 +1,32 @@
 /* =========================================================
    Nexbit — Trade Page
    File: trade.js
-   Version: 3.0 (REAL CHART + ORDER BOOK)
+   Version: 4.0 (Real Internal Order Engine)
 
-   Features:
-   - Live candlestick chart (TradingView Lightweight Charts)
-   - Real-time order book (depth) from Binance
-   - WebSocket live updates
-   - Timeframe selector (1m, 5m, 15m, 1h, 4h, 1d)
-   - Buy/Sell estimate calculation
-   - No fake data anywhere
+   FEATURES:
+   - Live chart (TradingView Lightweight Charts)
+   - Internal order book (from Firebase, not Binance)
+   - Real order placement via engine.js
+   - Balance-aware Buy/Sell with locked/available
+   - Cancel from Orders page
+   - Recent trades feed
+   - Real-time order book refresh
+
+   ⚠ SECURITY NOTE:
+   This runs client-side for internal testing only.
+   Before public launch, ALL order + balance logic in
+   engine.js must move to Cloud Functions.
    ========================================================= */
 
 import { initializeApp, getApps, getApp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getDatabase, ref, get }
+import { getDatabase, ref, get, onValue }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+/* Import our engine */
+import engine from "./engine.js";
 
 /* =========================================================
    1. FIREBASE CONFIG
@@ -42,7 +51,6 @@ const db   = getDatabase(app);
    ========================================================= */
 const BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/24hr";
 const BINANCE_KLINES = "https://api.binance.com/api/v3/klines";
-const BINANCE_DEPTH  = "https://api.binance.com/api/v3/depth";
 const BINANCE_WS     = "wss://stream.binance.com:9443/ws";
 
 const DEXSCREENER   = "https://api.dexscreener.com/token-pairs/v1/bsc/";
@@ -50,7 +58,14 @@ const RND_ADDRESS   = "0xcF1FbF18bE9202865bcf88E6349B9D207F75942d";
 const RND_BUY_URL   = `https://pancakeswap.finance/swap?chain=bsc&outputCurrency=${RND_ADDRESS}`;
 const RND_SELL_URL  = `https://pancakeswap.finance/swap?chain=bsc&inputCurrency=${RND_ADDRESS}`;
 
-const PRICE_REFRESH_MS = 30_000;
+/* Only BTC is enabled for internal trading in this milestone */
+const INTERNAL_TRADING_PAIRS = {
+  BTC: "BTCUSDT"
+};
+
+const PRICE_REFRESH_MS   = 30_000;
+const ORDERBOOK_REFRESH_MS = 3_000;
+const TRADES_REFRESH_MS   = 5_000;
 
 /* =========================================================
    3. COIN CONFIG
@@ -70,21 +85,28 @@ const coins = {
    ========================================================= */
 let currentCoin    = "BTC";
 let currentPrice   = null;
-let currentBalance = null;
 let currentUser    = null;
 let currentTF      = "1m";
 
-let chart          = null;
-let candleSeries   = null;
-let volumeSeries   = null;
-let chartReady     = false;
+/* Balances for the currently selected asset pair */
+let balanceBase   = { available: 0, locked: 0 };   // e.g. BTC
+let balanceQuote  = { available: 0, locked: 0 };   // e.g. USDT
 
+/* Chart */
+let chart        = null;
+let candleSeries = null;
+let volumeSeries = null;
+let chartReady   = false;
+
+/* Timers / WS */
 let priceTimer     = null;
+let obTimer        = null;
+let tradesTimer    = null;
 let binanceWS      = null;
-let depthWS        = null;
+
 let pricesFetched  = false;
 
-const FEE_ESTIMATE = 0.001;
+const FEE_RATE = 0.001;
 
 /* =========================================================
    5. HELPERS
@@ -121,6 +143,9 @@ function showToast(msg, ok = true) {
   if (!t || !m) return;
   m.textContent = msg;
   t.style.borderColor = ok ? "var(--success)" : "var(--danger)";
+  t.style.boxShadow = ok
+    ? "0 0 30px rgba(0,255,163,0.4)"
+    : "0 0 30px rgba(255,77,109,0.4)";
   const c = t.querySelector(".check");
   if (c) {
     c.style.background = ok ? "var(--success)" : "var(--danger)";
@@ -154,7 +179,7 @@ window.logoutUser = async (e) => {
 };
 
 /* =========================================================
-   7. COIN FROM URL
+   7. LOAD COIN FROM URL
    ========================================================= */
 function loadCoinFromURL() {
   const params = new URLSearchParams(location.search);
@@ -210,67 +235,122 @@ function updateCoinUI() {
   if (sellPriceEl) sellPriceEl.textContent = priceText;
 
   renderRNDMode(coin);
+  updateBalanceLabels();
   updateCalc("buy");
   updateCalc("sell");
 }
 
+/* Show internal trading availability */
 function renderRNDMode(coin) {
   const isRND = currentCoin === "RND";
+  const isInternal = currentCoin in INTERNAL_TRADING_PAIRS;
+
   const orderCard = document.querySelector(".order-card");
+  const tradeTabs = document.querySelector(".trade-tabs");
   const buyForm = getElement("formBuy");
   const sellForm = getElement("formSell");
-  const tradeTabs = document.querySelector(".trade-tabs");
   const obCard = document.querySelector(".orderbook-card");
-  const chartCard = document.querySelector(".chart-card");
 
   if (!orderCard) return;
 
-  const oldPanel = document.getElementById("rndPanel");
-  if (oldPanel) oldPanel.remove();
+  /* Remove old panels */
+  const oldRND = document.getElementById("rndPanel");
+  if (oldRND) oldRND.remove();
+  const oldNotice = document.getElementById("pairNotice");
+  if (oldNotice) oldNotice.remove();
 
-  if (!isRND) {
-    if (tradeTabs) tradeTabs.style.display = "";
-    if (buyForm)   buyForm.style.display = "";
-    if (sellForm)  sellForm.style.display = "";
-    if (obCard)    obCard.style.display = "";
-    if (chartCard) chartCard.style.display = "";
+  if (isRND) {
+    /* RND — external swap only */
+    if (tradeTabs) tradeTabs.style.display = "none";
+    if (buyForm)   buyForm.style.display = "none";
+    if (sellForm)  sellForm.style.display = "none";
+    if (obCard)    obCard.style.display = "none";
+
+    const panel = document.createElement("div");
+    panel.id = "rndPanel";
+    panel.style.padding = "4px 0";
+    panel.innerHTML = `
+      <div style="padding:18px;background:rgba(255,46,147,0.08);border:1px solid rgba(255,46,147,0.35);border-radius:14px;">
+        <div style="font-family:'Orbitron',sans-serif;font-weight:700;font-size:1rem;color:var(--neon-pink);margin-bottom:6px;">
+          ⚠ RND — External Swap Only
+        </div>
+        <p style="font-size:0.85rem;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
+          RND is currently traded <strong>only on PancakeSwap (BSC)</strong>.
+        </p>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <a href="${RND_BUY_URL}" target="_blank" rel="noopener noreferrer"
+             style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#041018;background:linear-gradient(90deg,var(--neon-green),#00d484);">
+            🟢 Buy RND on PancakeSwap ↗
+          </a>
+          <a href="${RND_SELL_URL}" target="_blank" rel="noopener noreferrer"
+             style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#fff;background:linear-gradient(90deg,var(--danger),#d63450);">
+            🔴 Sell RND on PancakeSwap ↗
+          </a>
+        </div>
+      </div>
+    `;
+    orderCard.insertBefore(panel, orderCard.firstChild);
     return;
   }
 
-  if (tradeTabs) tradeTabs.style.display = "none";
-  if (buyForm)   buyForm.style.display = "none";
-  if (sellForm)  sellForm.style.display = "none";
-  if (obCard)    obCard.style.display = "none";
+  /* Show trading UI */
+  if (tradeTabs) tradeTabs.style.display = "";
+  if (buyForm)   buyForm.style.display = "";
+  if (sellForm)  sellForm.style.display = "";
+  if (obCard)    obCard.style.display = "";
 
-  const panel = document.createElement("div");
-  panel.id = "rndPanel";
-  panel.style.padding = "4px 0";
-  panel.innerHTML = `
-    <div style="padding:18px;background:rgba(255,46,147,0.08);border:1px solid rgba(255,46,147,0.35);border-radius:14px;">
-      <div style="font-family:'Orbitron',sans-serif;font-weight:700;font-size:1rem;color:var(--neon-pink);margin-bottom:6px;">
-        ⚠ RND — External Swap Only
-      </div>
-      <p style="font-size:0.85rem;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
-        RND is currently traded <strong>only on PancakeSwap (BSC)</strong>.
-        Nexbit does not yet support internal RND trading.
-      </p>
-      <div style="display:flex;flex-direction:column;gap:10px;">
-        <a href="${RND_BUY_URL}" target="_blank" rel="noopener noreferrer"
-           style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#041018;background:linear-gradient(90deg,var(--neon-green),#00d484);">
-          🟢 Buy RND on PancakeSwap ↗
-        </a>
-        <a href="${RND_SELL_URL}" target="_blank" rel="noopener noreferrer"
-           style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#fff;background:linear-gradient(90deg,var(--danger),#d63450);">
-          🔴 Sell RND on PancakeSwap ↗
-        </a>
-      </div>
-    </div>
-  `;
-  orderCard.insertBefore(panel, orderCard.firstChild);
+  if (!isInternal) {
+    /* Info banner for non-internal pairs */
+    const panel = document.createElement("div");
+    panel.id = "pairNotice";
+    panel.style.cssText = "padding:14px;background:rgba(255,189,46,0.08);border:1px solid rgba(255,189,46,0.3);border-radius:12px;margin-bottom:14px;font-size:0.82rem;color:#ffbd2e;line-height:1.5;";
+    panel.innerHTML = `
+      ⚠ <strong>${escapeHTML(coin.name)}</strong> internal trading is not yet enabled.<br>
+      Currently only <strong>BTC/USDT</strong> supports internal order placement.
+      Live price and chart are shown above.
+    `;
+    orderCard.insertBefore(panel, orderCard.firstChild);
+  }
+}
+
+/* Show available / locked balances above amount input */
+function updateBalanceLabels() {
+  const buyInput = getElement("buyAmount");
+  const sellInput = getElement("sellAmount");
+  const formBuy = getElement("formBuy");
+  const formSell = getElement("formSell");
+
+  if (formBuy) {
+    let info = formBuy.querySelector(".balance-info");
+    if (!info) {
+      info = document.createElement("div");
+      info.className = "balance-info";
+      info.style.cssText = "display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-dim);margin-bottom:8px;padding:6px 10px;background:rgba(0,240,255,0.05);border-radius:8px;";
+      formBuy.insertBefore(info, formBuy.firstChild);
+    }
+    info.innerHTML = `
+      <span>Available: <strong style="color:var(--neon-green);">$${Number(balanceQuote.available).toFixed(2)}</strong></span>
+      <span>Locked: <strong style="color:#ffbd2e;">$${Number(balanceQuote.locked).toFixed(2)}</strong></span>
+    `;
+  }
+
+  if (formSell) {
+    let info = formSell.querySelector(".balance-info");
+    if (!info) {
+      info = document.createElement("div");
+      info.className = "balance-info";
+      info.style.cssText = "display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-dim);margin-bottom:8px;padding:6px 10px;background:rgba(0,240,255,0.05);border-radius:8px;";
+      formSell.insertBefore(info, formSell.firstChild);
+    }
+    info.innerHTML = `
+      <span>Available: <strong style="color:var(--neon-green);">${Number(balanceBase.available).toFixed(8)} ${currentCoin}</strong></span>
+      <span>Locked: <strong style="color:#ffbd2e;">${Number(balanceBase.locked).toFixed(8)}</strong></span>
+    `;
+  }
 }
 
 /* =========================================================
-   9. CHART — TradingView Lightweight Charts
+   9. CHART
    ========================================================= */
 function initChart() {
   const container = getElement("chartContainer");
@@ -334,7 +414,6 @@ function initChart() {
   return true;
 }
 
-/* Fetch historical klines */
 async function loadChartData(symbol, interval) {
   if (!candleSeries || !volumeSeries) return;
 
@@ -373,7 +452,6 @@ async function loadChartData(symbol, interval) {
   }
 }
 
-/* Connect to Binance kline WebSocket */
 function connectChartWS(symbol, interval) {
   if (binanceWS) {
     try { binanceWS.close(); } catch (_) {}
@@ -407,7 +485,6 @@ function connectChartWS(symbol, interval) {
       if (candleSeries) candleSeries.update(candle);
       if (volumeSeries) volumeSeries.update(vol);
 
-      /* Also update live price on the header */
       const coin = coins[currentCoin];
       if (coin && coin.type === "binance" && Number.isFinite(candle.close)) {
         coin.price = candle.close;
@@ -417,78 +494,83 @@ function connectChartWS(symbol, interval) {
         updateCalc("buy");
         updateCalc("sell");
       }
-
-    } catch (err) { /* ignore parse errors */ }
+    } catch (_) {}
   };
 
-  binanceWS.onerror = () => { /* silent */ };
+  binanceWS.onerror = () => {};
   binanceWS.onclose = () => {
-    /* try reconnect after 3s if still on same symbol */
     setTimeout(() => {
-      if (coins[currentCoin]?.marketSymbol) {
-        connectChartWS(coins[currentCoin].marketSymbol, currentTF);
-      }
+      const c = coins[currentCoin];
+      if (c && c.marketSymbol) connectChartWS(c.marketSymbol, currentTF);
     }, 3000);
   };
 }
 
 /* =========================================================
-   10. ORDER BOOK
+   10. INTERNAL ORDER BOOK
    ========================================================= */
-async function fetchOrderBook(symbol) {
+async function refreshOrderBook() {
+  const pair = INTERNAL_TRADING_PAIRS[currentCoin];
+  if (!pair) {
+    const container = getElement("orderBookContent");
+    if (container) {
+      container.innerHTML = `
+        <div class="ob-loading">
+          <div style="color:var(--text-dim);font-size:0.85rem;text-align:center;padding:20px;">
+            Internal order book is not available for this asset.
+          </div>
+        </div>`;
+    }
+    return;
+  }
+
   try {
-    const url = new URL(BINANCE_DEPTH);
-    url.searchParams.set("symbol", symbol);
-    url.searchParams.set("limit", "10");
-
-    const resp = await fetch(url.toString(), { cache: "no-store" });
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const data = await resp.json();
-
-    renderOrderBook(data.bids || [], data.asks || []);
-
+    const book = await engine.getOrderBook(pair, 12);
+    renderOrderBook(book);
   } catch (err) {
-    console.warn("Order book fetch failed:", err);
+    console.warn("Order book refresh failed:", err);
   }
 }
 
-function renderOrderBook(bids, asks) {
+function renderOrderBook(book) {
   const container = getElement("orderBookContent");
   if (!container) return;
 
-  const sortedAsks = [...asks].sort((a, b) => Number(a[0]) - Number(b[0]));
-  const sortedBids = [...bids].sort((a, b) => Number(b[0]) - Number(a[0]));
+  const bids = (book.bids || []).slice(0, 10);
+  const asks = (book.asks || []).slice(0, 10);
 
-  const displayAsks = sortedAsks.slice(0, 8).reverse();
-  const displayBids = sortedBids.slice(0, 8);
+  if (!bids.length && !asks.length) {
+    container.innerHTML = `
+      <div class="ob-loading">
+        <div style="color:var(--text-dim);font-size:0.85rem;text-align:center;padding:20px;">
+          Order book is empty.
+          <br><small style="opacity:0.7;">Place an order to start trading.</small>
+        </div>
+      </div>`;
+    return;
+  }
 
-  const bestAsk = sortedAsks[0] ? Number(sortedAsks[0][0]) : 0;
-  const bestBid = sortedBids[0] ? Number(sortedBids[0][0]) : 0;
+  const maxAskAmt = Math.max(...asks.map(a => a.totalQty), 1);
+  const maxBidAmt = Math.max(...bids.map(b => b.totalQty), 1);
 
-  const maxAskAmt = Math.max(...displayAsks.map(a => Number(a[1])), 1);
-  const maxBidAmt = Math.max(...displayBids.map(b => Number(b[1])), 1);
-
+  const bestAsk = asks[0] ? asks[0].price : 0;
+  const bestBid = bids[0] ? bids[0].price : 0;
   const midPrice = bestAsk && bestBid ? (bestAsk + bestBid) / 2 : bestAsk || bestBid;
-  const spread = bestAsk && bestBid ? (bestAsk - bestBid) : 0;
+  const spread = bestAsk && bestBid ? bestAsk - bestBid : 0;
 
   let html = `
-    <div class="ob-head">
-      <span>Price (USDT)</span>
-      <span>Amount</span>
-    </div>
+    <div class="ob-head"><span>Price (USDT)</span><span>Amount (BTC)</span></div>
     <div class="ob-section-title">Asks (Selling)</div>
   `;
 
-  displayAsks.forEach(([p, a]) => {
-    const amt = Number(a);
-    const pct = Math.min(100, (amt / maxAskAmt) * 100);
+  [...asks].reverse().forEach(a => {
+    const pct = Math.min(100, (a.totalQty / maxAskAmt) * 100);
     html += `
       <div class="ob-row ask">
         <div class="depth-bar" style="width:${pct}%"></div>
-        <span class="price">${formatPrice(Number(p))}</span>
-        <span class="amount">${formatAmount(amt)}</span>
-      </div>
-    `;
+        <span class="price">${formatPrice(a.price)}</span>
+        <span class="amount">${formatAmount(a.totalQty)}</span>
+      </div>`;
   });
 
   html += `
@@ -499,45 +581,66 @@ function renderOrderBook(bids, asks) {
     <div class="ob-section-title">Bids (Buying)</div>
   `;
 
-  displayBids.forEach(([p, a]) => {
-    const amt = Number(a);
-    const pct = Math.min(100, (amt / maxBidAmt) * 100);
+  bids.forEach(b => {
+    const pct = Math.min(100, (b.totalQty / maxBidAmt) * 100);
     html += `
       <div class="ob-row bid">
         <div class="depth-bar" style="width:${pct}%"></div>
-        <span class="price">${formatPrice(Number(p))}</span>
-        <span class="amount">${formatAmount(amt)}</span>
-      </div>
-    `;
+        <span class="price">${formatPrice(b.price)}</span>
+        <span class="amount">${formatAmount(b.totalQty)}</span>
+      </div>`;
   });
 
   container.innerHTML = html;
 }
 
-/* Depth WebSocket for live updates */
-function connectDepthWS(symbol) {
-  if (depthWS) {
-    try { depthWS.close(); } catch (_) {}
-    depthWS = null;
+/* =========================================================
+   11. RECENT TRADES (Internal)
+   ========================================================= */
+async function refreshRecentTrades() {
+  const pair = INTERNAL_TRADING_PAIRS[currentCoin];
+  if (!pair) return;
+
+  try {
+    const trades = await engine.getRecentTrades(pair, 15);
+    renderRecentTrades(trades);
+  } catch (err) {
+    console.warn("Recent trades fetch failed:", err);
+  }
+}
+
+function renderRecentTrades(trades) {
+  /* We'll add a small "recent trades" area under order book if it exists */
+  let container = getElement("recentTradesContent");
+  if (!container) {
+    /* Create it if not present */
+    const obCard = document.querySelector(".orderbook-card");
+    if (!obCard) return;
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "margin-top:16px;padding-top:14px;border-top:1px solid rgba(0,240,255,0.1);";
+    wrap.innerHTML = `
+      <div style="font-family:'Orbitron',sans-serif;font-size:0.85rem;font-weight:700;margin-bottom:10px;">Recent Trades</div>
+      <div id="recentTradesContent"></div>
+    `;
+    obCard.appendChild(wrap);
+    container = getElement("recentTradesContent");
   }
 
-  const streamName = `${symbol.toLowerCase()}@depth20@100ms`;
-  depthWS = new WebSocket(`${BINANCE_WS}/${streamName}`);
+  if (!trades.length) {
+    container.innerHTML = `<div style="text-align:center;font-size:0.75rem;color:var(--text-dim);padding:10px;">No trades yet.</div>`;
+    return;
+  }
 
-  depthWS.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.bids && data.asks) {
-        renderOrderBook(data.bids, data.asks);
-      }
-    } catch (_) {}
-  };
-
-  depthWS.onerror = () => { /* silent */ };
+  container.innerHTML = trades.map(t => `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:4px 6px;font-size:0.72rem;font-family:'Courier New',monospace;border-radius:4px;">
+      <span style="color:var(--neon-green);font-weight:700;">${formatPrice(t.price)}</span>
+      <span style="color:var(--text-dim);text-align:right;">${formatAmount(t.quantity)} BTC</span>
+    </div>
+  `).join("");
 }
 
 /* =========================================================
-   11. PRICE FETCHING (24h change + initial)
+   12. PRICE FETCHING
    ========================================================= */
 let binanceInFlight = false;
 async function fetchBinancePrices() {
@@ -573,7 +676,6 @@ async function fetchBinancePrices() {
         coin.change = Number.isFinite(ch) ? ch : null;
       }
     });
-
   } catch (err) {
     console.warn("Binance fetch failed:", err);
   } finally {
@@ -589,7 +691,7 @@ async function fetchRNDPrice() {
     });
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const pairs = await resp.json();
-    if (!Array.isArray(pairs)) throw new Error("Bad response");
+    if (!Array.isArray(pairs)) return;
 
     const valid = pairs.filter(p =>
       p.chainId === "bsc" &&
@@ -601,18 +703,13 @@ async function fetchRNDPrice() {
 
     coins.RND.price  = Number(valid[0].priceUsd);
     coins.RND.change = Number(valid[0].priceChange?.h24);
-
-  } catch (err) {
-    console.warn("RND fetch failed:", err);
-  }
+  } catch (_) {}
 }
 
 async function refreshAllPrices() {
   await Promise.all([fetchBinancePrices(), fetchRNDPrice()]);
   const coin = coins[currentCoin];
-  if (coin && Number.isFinite(coin.price)) {
-    currentPrice = coin.price;
-  }
+  if (coin && Number.isFinite(coin.price)) currentPrice = coin.price;
   updateCoinUI();
   pricesFetched = true;
 }
@@ -624,7 +721,44 @@ function startPriceRefresh() {
 }
 
 /* =========================================================
-   12. TABS + AMOUNT HELPERS
+   13. BALANCE LOADING + SUBSCRIPTIONS
+   ========================================================= */
+async function loadBalances() {
+  if (!currentUser) return;
+
+  const baseAsset  = currentCoin;      // BTC
+  const quoteAsset = "USDT";
+
+  try {
+    balanceBase  = await engine.getBalance(currentUser.uid, baseAsset);
+    balanceQuote = await engine.getBalance(currentUser.uid, quoteAsset);
+  } catch (err) {
+    console.warn("Balance load failed:", err);
+    balanceBase  = { available: 0, locked: 0 };
+    balanceQuote = { available: 0, locked: 0 };
+  }
+
+  updateBalanceLabels();
+}
+
+function subscribeBalances() {
+  if (!currentUser) return;
+  const baseAsset  = currentCoin;
+  const quoteAsset = "USDT";
+
+  onValue(ref(db, `balances/${currentUser.uid}/${baseAsset}`), snap => {
+    balanceBase = snap.exists() ? snap.val() : { available: 0, locked: 0 };
+    updateBalanceLabels();
+  });
+
+  onValue(ref(db, `balances/${currentUser.uid}/${quoteAsset}`), snap => {
+    balanceQuote = snap.exists() ? snap.val() : { available: 0, locked: 0 };
+    updateBalanceLabels();
+  });
+}
+
+/* =========================================================
+   14. TABS + AMOUNT HELPERS
    ========================================================= */
 window.switchTradeTab = (mode) => {
   const tabBuy  = getElement("tabBuy");
@@ -656,14 +790,24 @@ window.quickAmt = (mode, val) => {
 window.setMax = (mode) => {
   const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!inp) return;
-  if (!Number.isFinite(currentBalance) || currentBalance <= 0) {
-    showToast("Balance unavailable. Cannot set MAX.", false);
-    inp.value = "";
-    updateCalc(mode);
-    return;
+
+  if (mode === "buy") {
+    if (!Number.isFinite(balanceQuote.available) || balanceQuote.available <= 0) {
+      showToast("No USDT available.", false);
+      return;
+    }
+    /* MAX = available / (1 + fee) to leave room for fee */
+    const max = balanceQuote.available / (1 + FEE_RATE);
+    inp.value = Math.floor(max * 100) / 100;
+  } else {
+    if (!Number.isFinite(balanceBase.available) || balanceBase.available <= 0) {
+      showToast(`No ${currentCoin} available.`, false);
+      return;
+    }
+    /* Sell — MAX in USD = available BTC × price */
+    const max = balanceBase.available * (currentPrice || 0);
+    inp.value = Math.floor(max * 100) / 100;
   }
-  const usable = currentBalance * (1 - FEE_ESTIMATE);
-  inp.value = Math.floor(usable * 100) / 100;
   updateCalc(mode);
 };
 
@@ -692,7 +836,7 @@ function updateCalc(mode) {
     return;
   }
 
-  const fee = amount * FEE_ESTIMATE;
+  const fee = amount * FEE_RATE;
   if (mode === "buy") {
     if (receiveEl) receiveEl.textContent = (amount / price).toFixed(8) + " " + currentCoin;
     if (feeEl) feeEl.textContent = "$" + fee.toFixed(2);
@@ -704,41 +848,120 @@ function updateCalc(mode) {
   }
 }
 
+/* =========================================================
+   15. EXECUTE TRADE — real order placement
+   ========================================================= */
 window.executeTrade = async (mode) => {
   const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!inp) return;
-  const amount = parseFloat(inp.value) || 0;
+
+  /* Only BTC is internal-trading enabled for now */
+  if (!(currentCoin in INTERNAL_TRADING_PAIRS)) {
+    showToast(`${currentCoin} internal trading is not enabled yet.`, false);
+    return;
+  }
+
+  const amountUSD = parseFloat(inp.value) || 0;
 
   if (!pricesFetched || !Number.isFinite(currentPrice) || currentPrice <= 0) {
-    showToast("Price is still loading. Please wait a moment…", false);
+    showToast("Price is still loading. Please wait…", false);
     return;
   }
-  if (amount <= 0) { showToast("Please enter a valid amount.", false); return; }
-  if (amount < 10) { showToast("Minimum trade is $10.", false); return; }
-
-  if (currentCoin === "RND") {
-    showToast("RND is traded only on PancakeSwap. Use the external link.", false);
+  if (amountUSD <= 0) {
+    showToast("Enter a valid amount.", false);
+    return;
+  }
+  if (amountUSD < 1) {
+    showToast("Minimum order is $1.", false);
     return;
   }
 
-  if (Number.isFinite(currentBalance)) {
-    if (mode === "buy" && amount > currentBalance) {
-      showToast("Insufficient balance for this buy.", false);
+  /* Compute base asset quantity from USD */
+  const quantity = Number((amountUSD / currentPrice).toFixed(8));
+  if (quantity <= 0) {
+    showToast("Quantity too small.", false);
+    return;
+  }
+
+  /* ---------- Balance pre-check (client hint only) ---------- */
+  if (mode === "buy") {
+    const needed = amountUSD * (1 + FEE_RATE);
+    if (needed > balanceQuote.available) {
+      showToast(`Insufficient USDT. Available: $${balanceQuote.available.toFixed(2)}`, false);
       return;
     }
   } else {
-    showToast("Balance could not be verified.", false);
-    return;
+    if (quantity > balanceBase.available) {
+      showToast(`Insufficient ${currentCoin}. Available: ${balanceBase.available.toFixed(8)}`, false);
+      return;
+    }
   }
 
-  showToast(
-    "Trading not available yet. A real order engine is required before orders can be placed.",
-    false
-  );
+  /* ---------- Disable button ---------- */
+  const btn = document.querySelector(mode === "buy" ? ".btn-buy" : ".btn-sell");
+  const origText = btn ? btn.textContent : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = mode === "buy" ? "Placing Buy…" : "Placing Sell…";
+  }
+
+  try {
+    /* Ensure wallets exist first time */
+    await engine.ensureWallets(currentUser.uid);
+
+    /* Place order via engine */
+    const result = await engine.placeOrder({
+      uid: currentUser.uid,
+      pair: INTERNAL_TRADING_PAIRS[currentCoin],   // "BTCUSDT"
+      side: mode,
+      type: "limit",
+      price: currentPrice,
+      quantity
+    });
+
+    /* ---------- Report result ---------- */
+    const filled = Number(result.filled || 0);
+    const status = result.status;
+
+    if (status === "filled") {
+      showToast(
+        `✅ Order filled: ${filled.toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
+        true
+      );
+    } else if (status === "partial") {
+      showToast(
+        `⚡ Partially filled: ${filled.toFixed(8)} / ${Number(result.quantity).toFixed(8)} ${currentCoin}`,
+        true
+      );
+    } else {
+      showToast(
+        `📋 Order placed (open): ${Number(result.quantity).toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
+        true
+      );
+    }
+
+    /* Clear input */
+    inp.value = "";
+    updateCalc(mode);
+
+    /* Refresh UI */
+    await loadBalances();
+    await refreshOrderBook();
+    await refreshRecentTrades();
+
+  } catch (err) {
+    console.error("Order placement failed:", err);
+    showToast(err.message || "Order failed. Try again.", false);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
 };
 
 /* =========================================================
-   13. TIME FRAME SELECTOR
+   16. TIME FRAME SELECTOR
    ========================================================= */
 function bindTimeframeButtons() {
   const toolbar = getElement("chartToolbar");
@@ -758,31 +981,28 @@ function bindTimeframeButtons() {
 }
 
 /* =========================================================
-   14. RELOAD CHART + ORDER BOOK on coin switch
+   17. RELOAD CHART on coin switch
    ========================================================= */
 function reloadChartAndBook() {
   const coin = coins[currentCoin];
   if (!coin) return;
 
-  /* RND does not have internal chart/order book */
   if (coin.type !== "binance") {
     if (candleSeries) candleSeries.setData([]);
     if (volumeSeries) volumeSeries.setData([]);
-    const ob = getElement("orderBookContent");
-    if (ob) ob.innerHTML = `<div class="ob-loading">Order book not available for this asset.</div>`;
     if (binanceWS) { try { binanceWS.close(); } catch (_) {} binanceWS = null; }
-    if (depthWS) { try { depthWS.close(); } catch (_) {} depthWS = null; }
     return;
   }
 
   loadChartData(coin.marketSymbol, currentTF);
   connectChartWS(coin.marketSymbol, currentTF);
-  fetchOrderBook(coin.marketSymbol);
-  connectDepthWS(coin.marketSymbol);
+
+  refreshOrderBook();
+  refreshRecentTrades();
 }
 
 /* =========================================================
-   15. AUTH STATE
+   18. AUTH STATE
    ========================================================= */
 onAuthStateChanged(auth, async (user) => {
   if (!user) { window.location.href = "login.html"; return; }
@@ -795,28 +1015,34 @@ onAuthStateChanged(auth, async (user) => {
   if (un) un.textContent = first;
   if (ua) ua.textContent = first.charAt(0).toUpperCase();
 
-  try {
-    const snap = await get(ref(db, `users/${user.uid}`));
-    if (snap.exists()) {
-      const bal = Number(snap.val().balanceUSD);
-      if (Number.isFinite(bal) && bal >= 0) currentBalance = bal;
-    }
-  } catch (err) { /* silent */ }
-
   loadCoinFromURL();
   updateCoinUI();
+
+  /* Start price fetching */
   startPriceRefresh();
 
-  /* Init chart after a short tick so DOM is ready */
+  /* Load balances + subscribe */
+  await engine.ensureWallets(user.uid);
+  await loadBalances();
+  subscribeBalances();
+
+  /* Init chart */
   setTimeout(() => {
     if (initChart()) {
       reloadChartAndBook();
     }
+
+    /* Periodic refresh for order book + trades */
+    if (obTimer) clearInterval(obTimer);
+    obTimer = setInterval(refreshOrderBook, ORDERBOOK_REFRESH_MS);
+
+    if (tradesTimer) clearInterval(tradesTimer);
+    tradesTimer = setInterval(refreshRecentTrades, TRADES_REFRESH_MS);
   }, 200);
 });
 
 /* =========================================================
-   16. INIT
+   19. INIT
    ========================================================= */
 document.addEventListener("DOMContentLoaded", () => {
   const buyInp  = getElement("buyAmount");
@@ -828,7 +1054,8 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 window.addEventListener("beforeunload", () => {
-  if (priceTimer) clearInterval(priceTimer);
-  if (binanceWS)  { try { binanceWS.close(); } catch (_) {} }
-  if (depthWS)    { try { depthWS.close(); } catch (_) {} }
+  if (priceTimer)  clearInterval(priceTimer);
+  if (obTimer)     clearInterval(obTimer);
+  if (tradesTimer) clearInterval(tradesTimer);
+  if (binanceWS)   { try { binanceWS.close(); } catch (_) {} }
 });
