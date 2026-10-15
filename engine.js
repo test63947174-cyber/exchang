@@ -1,77 +1,95 @@
 /* =========================================================
    Nexbit — Order Engine + Matching Engine
    File: engine.js
-   Version: 1.0
+   Version: 2.0 (Fixed + Market/Limit + Whitelist)
 
-   ⚠⚠⚠  IMPORTANT SECURITY WARNING  ⚠⚠⚠
+   ⚠⚠⚠  SECURITY WARNING  ⚠⚠⚠
+   This runs CLIENT-SIDE for INTERNAL TESTING ONLY.
+   Before PUBLIC launch, move all logic to Cloud Functions.
 
-   This engine runs CLIENT-SIDE for internal testing only.
-   Before PUBLIC launch, ALL of the following MUST be moved
-   to Firebase Cloud Functions (server-side):
-
-     1. placeOrder()
-     2. cancelOrder()
-     3. runMatchingEngine()
-     4. All balance updates in Firebase transactions
-
-   Client-side order engine is NOT secure for real money.
-   Anyone can open DevTools and modify this code.
-
-   For now: internal testing only.
+   Architecture (modular — easy to port to backend):
+     - Balance layer: credit / debit / lock / unlock / spend
+     - Ledger layer: immutable audit log
+     - Order layer: create / cancel / validate
+     - OrderBook layer: in-memory structure persisted to RTDB
+     - Matching layer: price-time priority engine
    ========================================================= */
 
-import { getDatabase, ref, get, set, update, runTransaction, serverTimestamp, push }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-const db = getDatabase();
+import { initializeApp, getApps, getApp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getDatabase, ref, get, set, update, runTransaction, push
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 /* =========================================================
-   1. CONFIG
+   0. SAFE APP + DATABASE
+   Reuse existing default app if already initialized
    ========================================================= */
-const FEE_RATE = 0.001;          // 0.1% fee both sides
-const MIN_ORDER_USD = 1;         // Minimum $1 order
-const DEFAULT_PAIR = "BTCUSDT";
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDKFkbj5WRUinr_v7ARRtD-Gsxz4UlMrl0",
+  authDomain: "exchang-59ea7.firebaseapp.com",
+  databaseURL: "https://exchang-59ea7-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "exchang-59ea7",
+  storageBucket: "exchang-59ea7.firebasestorage.app",
+  messagingSenderId: "422935424250",
+  appId: "1:422935424250:web:b4da15d25714e499cbed43"
+};
+
+const app = getApps().length ? getApp() : initializeApp(FIREBASE_CONFIG);
+const db  = getDatabase(app);
 
 /* =========================================================
-   2. UTILITIES — Decimal-safe math
-   We use string + Number with 8 decimal places
+   1. CONFIG + WHITELIST
    ========================================================= */
-function toDecimal(n, places = 8) {
+const DEFAULT_FEE_RATE   = 0.001;      // 0.1%
+const DEFAULT_MIN_USD    = 1;          // Minimum $1 order value
+const MIN_REMAINING_DUST = 0.00000001; // Smallest meaningful quantity
+
+/* Supported internal trading pairs (whitelist).
+   Add more pairs here only after backend readiness.
+*/
+const SUPPORTED_PAIRS = {
+  "BTCUSDT": {
+    base: "BTC",
+    quote: "USDT",
+    pricePrecision: 2,      // $0.01 tick
+    qtyPrecision: 8,        // 0.00000001 BTC
+    minOrderUSD: 1,
+    feeRate: 0.001
+  }
+  /* Future pairs:
+  "ETHUSDT": { base: "ETH", quote: "USDT", pricePrecision: 2, qtyPrecision: 6, minOrderUSD: 1, feeRate: 0.001 }
+  */
+};
+
+/* =========================================================
+   2. SAFE DECIMAL MATH
+   Every amount stored as NUMBER with fixed precision.
+   Never do raw floating point for order/fee math.
+   ========================================================= */
+function fix(n, places = 8) {
   const num = Number(n);
   if (!Number.isFinite(num)) return 0;
   return Number(num.toFixed(places));
 }
 
-function addDec(a, b) {
-  return toDecimal(Number(a) + Number(b));
-}
-
-function subDec(a, b) {
-  return toDecimal(Number(a) - Number(b));
-}
-
-function mulDec(a, b) {
-  return toDecimal(Number(a) * Number(b));
-}
-
-function divDec(a, b) {
+function addD(a, b, places = 8) { return fix(Number(a) + Number(b), places); }
+function subD(a, b, places = 8) { return fix(Number(a) - Number(b), places); }
+function mulD(a, b, places = 8) { return fix(Number(a) * Number(b), places); }
+function divD(a, b, places = 8) {
   if (Number(b) === 0) return 0;
-  return toDecimal(Number(a) / Number(b));
+  return fix(Number(a) / Number(b), places);
 }
 
 /* =========================================================
    3. BALANCE HELPERS
-   Structure: /balances/{uid}/{asset} = { available, locked }
-   USDT and BTC both tracked separately
+   Path: /balances/{uid}/{asset} = { available, locked }
    ========================================================= */
 
-/* Read balance (safe) */
 export async function getBalance(uid, asset) {
   try {
     const snap = await get(ref(db, `balances/${uid}/${asset}`));
-    if (!snap.exists()) {
-      return { available: 0, locked: 0 };
-    }
+    if (!snap.exists()) return { available: 0, locked: 0 };
     const v = snap.val();
     return {
       available: Number(v.available) || 0,
@@ -83,48 +101,48 @@ export async function getBalance(uid, asset) {
   }
 }
 
-/* Ensure balance node exists with defaults */
-async function ensureBalance(uid, asset) {
-  const balanceRef = ref(db, `balances/${uid}/${asset}`);
-  const snap = await get(balanceRef);
+async function ensureBalanceNode(uid, asset) {
+  const bRef = ref(db, `balances/${uid}/${asset}`);
+  const snap = await get(bRef);
   if (!snap.exists()) {
-    await set(balanceRef, { available: 0, locked: 0 });
+    await set(bRef, { available: 0, locked: 0 });
   }
 }
 
 /* =========================================================
    4. LEDGER
-   Immutable audit log of every balance change
-   /ledger/{uid}/{entryId}
+   Path: /ledger/{uid}/{entryId}
    ========================================================= */
 async function writeLedger(uid, asset, type, amount, balanceAfter, reference) {
   const entryRef = push(ref(db, `ledger/${uid}`));
   await set(entryRef, {
     asset,
     type,
-    amount: toDecimal(amount),
-    balanceAfter: toDecimal(balanceAfter),
+    amount: fix(amount),
+    balanceAfter: fix(balanceAfter),
     reference: reference || null,
     createdAt: Date.now()
   });
 }
 
 /* =========================================================
-   5. ATOMIC BALANCE OPERATIONS
-   Uses runTransaction to prevent race conditions
+   5. ATOMIC BALANCE OPS
+   Each one uses runTransaction for safety.
+   If insufficient funds, transaction throws → no change.
    ========================================================= */
 
-/* Credit — add to available */
+/* --- Credit (add to available) --- */
 export async function creditBalance(uid, asset, amount, reason) {
+  amount = fix(amount);
   if (amount <= 0) throw new Error("Credit amount must be > 0");
-  await ensureBalance(uid, asset);
+  await ensureBalanceNode(uid, asset);
 
-  const balanceRef = ref(db, `balances/${uid}/${asset}`);
-  const result = await runTransaction(balanceRef, (current) => {
+  const bRef = ref(db, `balances/${uid}/${asset}`);
+  const result = await runTransaction(bRef, current => {
     const bal = current || { available: 0, locked: 0 };
     return {
-      available: toDecimal(Number(bal.available || 0) + Number(amount)),
-      locked:    toDecimal(Number(bal.locked    || 0))
+      available: fix(Number(bal.available || 0) + amount),
+      locked:    fix(Number(bal.locked    || 0))
     };
   });
 
@@ -133,26 +151,30 @@ export async function creditBalance(uid, asset, amount, reason) {
   return newBal;
 }
 
-/* Debit — from available only */
+/* --- Debit (only from available) --- */
 export async function debitBalance(uid, asset, amount, reason) {
+  amount = fix(amount);
   if (amount <= 0) throw new Error("Debit amount must be > 0");
-  await ensureBalance(uid, asset);
+  await ensureBalanceNode(uid, asset);
 
-  const balanceRef = ref(db, `balances/${uid}/${asset}`);
-  const result = await runTransaction(balanceRef, (current) => {
+  const bRef = ref(db, `balances/${uid}/${asset}`);
+  let insufficient = false;
+
+  const result = await runTransaction(bRef, current => {
     const bal = current || { available: 0, locked: 0 };
     const avail = Number(bal.available) || 0;
+    const locked = Number(bal.locked) || 0;
     if (avail < amount) {
-      /* Abort transaction → no change */
-      return;
+      insufficient = true;
+      return;  // abort (leave unchanged)
     }
     return {
-      available: toDecimal(avail - Number(amount)),
-      locked:    toDecimal(Number(bal.locked || 0))
+      available: fix(avail - amount),
+      locked:    fix(locked)
     };
   });
 
-  if (!result.committed) {
+  if (insufficient || !result.committed) {
     throw new Error("Insufficient available balance");
   }
 
@@ -161,24 +183,30 @@ export async function debitBalance(uid, asset, amount, reason) {
   return newBal;
 }
 
-/* Lock — move from available to locked (for pending orders) */
+/* --- Lock (available → locked) --- */
 export async function lockBalance(uid, asset, amount, reason) {
+  amount = fix(amount);
   if (amount <= 0) throw new Error("Lock amount must be > 0");
-  await ensureBalance(uid, asset);
+  await ensureBalanceNode(uid, asset);
 
-  const balanceRef = ref(db, `balances/${uid}/${asset}`);
-  const result = await runTransaction(balanceRef, (current) => {
+  const bRef = ref(db, `balances/${uid}/${asset}`);
+  let insufficient = false;
+
+  const result = await runTransaction(bRef, current => {
     const bal = current || { available: 0, locked: 0 };
     const avail = Number(bal.available) || 0;
     const locked = Number(bal.locked) || 0;
-    if (avail < amount) return;
+    if (avail < amount) {
+      insufficient = true;
+      return;
+    }
     return {
-      available: toDecimal(avail - Number(amount)),
-      locked:    toDecimal(locked + Number(amount))
+      available: fix(avail - amount),
+      locked:    fix(locked + amount)
     };
   });
 
-  if (!result.committed) {
+  if (insufficient || !result.committed) {
     throw new Error("Insufficient available balance to lock");
   }
 
@@ -187,24 +215,30 @@ export async function lockBalance(uid, asset, amount, reason) {
   return newBal;
 }
 
-/* Unlock — move from locked back to available (for cancellation) */
+/* --- Unlock (locked → available) --- */
 export async function unlockBalance(uid, asset, amount, reason) {
+  amount = fix(amount);
   if (amount <= 0) throw new Error("Unlock amount must be > 0");
-  await ensureBalance(uid, asset);
+  await ensureBalanceNode(uid, asset);
 
-  const balanceRef = ref(db, `balances/${uid}/${asset}`);
-  const result = await runTransaction(balanceRef, (current) => {
+  const bRef = ref(db, `balances/${uid}/${asset}`);
+  let insufficient = false;
+
+  const result = await runTransaction(bRef, current => {
     const bal = current || { available: 0, locked: 0 };
     const avail = Number(bal.available) || 0;
     const locked = Number(bal.locked) || 0;
-    if (locked < amount) return;
+    if (locked < amount) {
+      insufficient = true;
+      return;
+    }
     return {
-      available: toDecimal(avail + Number(amount)),
-      locked:    toDecimal(locked - Number(amount))
+      available: fix(avail + amount),
+      locked:    fix(locked - amount)
     };
   });
 
-  if (!result.committed) {
+  if (insufficient || !result.committed) {
     throw new Error("Insufficient locked balance to unlock");
   }
 
@@ -213,23 +247,30 @@ export async function unlockBalance(uid, asset, amount, reason) {
   return newBal;
 }
 
-/* Spend — remove from locked (order filled / fee taken) */
+/* --- Spend locked (remove from locked, e.g. after trade) --- */
 export async function spendLocked(uid, asset, amount, reason) {
+  amount = fix(amount);
   if (amount <= 0) throw new Error("Spend amount must be > 0");
-  await ensureBalance(uid, asset);
+  await ensureBalanceNode(uid, asset);
 
-  const balanceRef = ref(db, `balances/${uid}/${asset}`);
-  const result = await runTransaction(balanceRef, (current) => {
+  const bRef = ref(db, `balances/${uid}/${asset}`);
+  let insufficient = false;
+
+  const result = await runTransaction(bRef, current => {
     const bal = current || { available: 0, locked: 0 };
+    const avail = Number(bal.available) || 0;
     const locked = Number(bal.locked) || 0;
-    if (locked < amount) return;
+    if (locked < amount) {
+      insufficient = true;
+      return;
+    }
     return {
-      available: toDecimal(Number(bal.available) || 0),
-      locked:    toDecimal(locked - Number(amount))
+      available: fix(avail),
+      locked:    fix(locked - amount)
     };
   });
 
-  if (!result.committed) {
+  if (insufficient || !result.committed) {
     throw new Error("Insufficient locked balance to spend");
   }
 
@@ -239,18 +280,41 @@ export async function spendLocked(uid, asset, amount, reason) {
 }
 
 /* =========================================================
-   6. ORDER BOOK STRUCTURE
-   /orderBook/{pair}/bids/{priceStr} = { totalQty, orders: {...} }
-   /orderBook/{pair}/asks/{priceStr} = { ... }
-   Price is stringified to avoid float key issues
+   6. ORDER VALIDATION
    ========================================================= */
-
-function priceKey(price) {
-  return String(toDecimal(price));
+function getPairConfig(pair) {
+  const cfg = SUPPORTED_PAIRS[pair];
+  if (!cfg) throw new Error(`Pair ${pair} is not enabled for trading`);
+  return cfg;
 }
 
-/* Get current order book (top N levels) */
-export async function getOrderBook(pair = DEFAULT_PAIR, depth = 15) {
+function validatePrice(price, cfg) {
+  const p = fix(price, cfg.pricePrecision);
+  if (!Number.isFinite(p) || p <= 0) throw new Error("Price must be > 0");
+  /* Round to tick */
+  const tick = 1 / Math.pow(10, cfg.pricePrecision);
+  const rounded = Math.round(p / tick) * tick;
+  return fix(rounded, cfg.pricePrecision);
+}
+
+function validateQuantity(qty, cfg) {
+  const q = fix(qty, cfg.qtyPrecision);
+  if (!Number.isFinite(q) || q <= 0) throw new Error("Quantity must be > 0");
+  return q;
+}
+
+/* =========================================================
+   7. ORDER BOOK
+   Path: /orderBook/{pair}/bids/{priceKey} = { totalQty, orders: { orderId: {...} } }
+         /orderBook/{pair}/asks/{priceKey}
+   ========================================================= */
+function priceKey(price, cfg) {
+  return String(fix(price, cfg.pricePrecision));
+}
+
+export async function getOrderBook(pair, depth = 15) {
+  const cfg = getPairConfig(pair);
+
   const [bidsSnap, asksSnap] = await Promise.all([
     get(ref(db, `orderBook/${pair}/bids`)),
     get(ref(db, `orderBook/${pair}/asks`))
@@ -261,18 +325,20 @@ export async function getOrderBook(pair = DEFAULT_PAIR, depth = 15) {
 
   if (bidsSnap.exists()) {
     const v = bidsSnap.val();
-    Object.keys(v).forEach(priceStr => {
-      bids.push({ price: Number(priceStr), totalQty: Number(v[priceStr].totalQty) || 0 });
+    Object.keys(v).forEach(p => {
+      const total = Number(v[p].totalQty) || 0;
+      if (total > 0) bids.push({ price: Number(p), totalQty: total });
     });
-    bids.sort((a, b) => b.price - a.price);  // highest first
+    bids.sort((a, b) => b.price - a.price);
   }
 
   if (asksSnap.exists()) {
     const v = asksSnap.val();
-    Object.keys(v).forEach(priceStr => {
-      asks.push({ price: Number(priceStr), totalQty: Number(v[priceStr].totalQty) || 0 });
+    Object.keys(v).forEach(p => {
+      const total = Number(v[p].totalQty) || 0;
+      if (total > 0) asks.push({ price: Number(p), totalQty: total });
     });
-    asks.sort((a, b) => a.price - b.price);  // lowest first
+    asks.sort((a, b) => a.price - b.price);
   }
 
   return {
@@ -281,344 +347,325 @@ export async function getOrderBook(pair = DEFAULT_PAIR, depth = 15) {
   };
 }
 
-/* Get recent trades for a pair */
-export async function getRecentTrades(pair = DEFAULT_PAIR, limit = 20) {
-  const snap = await get(ref(db, `trades`));
+export async function getRecentTrades(pair, limit = 20) {
+  const snap = await get(ref(db, "trades"));
   if (!snap.exists()) return [];
-
-  const all = snap.val();
-  const list = Object.values(all)
+  return Object.values(snap.val())
     .filter(t => t && t.pair === pair)
     .sort((a, b) => (b.executedAt || 0) - (a.executedAt || 0))
     .slice(0, limit);
+}
 
-  return list;
+/* Add order to book (with transaction) */
+async function addToBook(pair, side, price, orderId, uid, qty, cfg) {
+  const pk = priceKey(price, cfg);
+  const path = `orderBook/${pair}/${side === "buy" ? "bids" : "asks"}/${pk}`;
+  const bRef = ref(db, path);
+
+  await runTransaction(bRef, current => {
+    const c = current || { totalQty: 0, orders: {} };
+    c.totalQty = fix(Number(c.totalQty || 0) + qty);
+    c.orders = c.orders || {};
+    c.orders[orderId] = {
+      uid,
+      qty: fix(qty),
+      remaining: fix(qty),
+      createdAt: Date.now()
+    };
+    return c;
+  });
+}
+
+/* Remove or reduce order from book */
+async function updateBookAfterFill(pair, side, price, orderId, qty, cfg) {
+  const pk = priceKey(price, cfg);
+  const path = `orderBook/${pair}/${side === "buy" ? "bids" : "asks"}/${pk}`;
+  const bRef = ref(db, path);
+
+  await runTransaction(bRef, current => {
+    if (!current || !current.orders) return current;
+    const ord = current.orders[orderId];
+    if (ord) {
+      ord.remaining = fix(Number(ord.remaining || 0) - qty);
+      if (ord.remaining <= MIN_REMAINING_DUST) {
+        delete current.orders[orderId];
+      }
+    }
+    current.totalQty = fix(Number(current.totalQty || 0) - qty);
+
+    /* Remove empty level */
+    const remainingOrders = current.orders ? Object.keys(current.orders).length : 0;
+    if (remainingOrders === 0 || current.totalQty <= MIN_REMAINING_DUST) {
+      return null;
+    }
+    return current;
+  });
+}
+
+/* Remove order entirely from book (for cancel) */
+async function removeFromBook(pair, side, price, orderId, qty, cfg) {
+  const pk = priceKey(price, cfg);
+  const path = `orderBook/${pair}/${side === "buy" ? "bids" : "asks"}/${pk}`;
+  const bRef = ref(db, path);
+
+  await runTransaction(bRef, current => {
+    if (!current || !current.orders) return current;
+    if (current.orders[orderId]) {
+      delete current.orders[orderId];
+      current.totalQty = fix(Number(current.totalQty || 0) - qty);
+    }
+    const remainingOrders = current.orders ? Object.keys(current.orders).length : 0;
+    if (remainingOrders === 0 || current.totalQty <= MIN_REMAINING_DUST) {
+      return null;
+    }
+    return current;
+  });
 }
 
 /* =========================================================
-   7. PLACE ORDER
+   8. PLACE ORDER (Limit + Market)
    ========================================================= */
 export async function placeOrder({
   uid,
-  pair = DEFAULT_PAIR,
+  pair = "BTCUSDT",
   side,          // "buy" | "sell"
-  type,          // "limit" | "market"  (market = instant at best price)
-  price,         // number (required for limit, ignored for market)
-  quantity       // number — base asset quantity (e.g. BTC amount)
+  type,          // "limit" | "market"
+  price,         // for limit — required; for market — ignored
+  quantity       // base asset amount (e.g. BTC)
 }) {
   if (!uid) throw new Error("User not authenticated");
   if (!["buy", "sell"].includes(side)) throw new Error("Invalid side");
   if (!["limit", "market"].includes(type)) throw new Error("Invalid type");
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    throw new Error("Quantity must be greater than 0");
-  }
 
-  const [base, quote] = pair.replace("/", "").replace("USDT", "|USDT").split("|");
-  // For BTCUSDT: base = BTC, quote = USDT
-  const baseAsset = base;         // BTC
-  const quoteAsset = quote || "USDT";
+  const cfg = getPairConfig(pair);
+  const { base, quote } = cfg;
 
-  /* Get best price for market orders */
-  let orderPrice = price;
+  /* --- Determine price --- */
+  let execPrice;
   if (type === "market") {
-    const book = await getOrderBook(pair, 1);
-    if (side === "buy") {
-      if (!book.asks.length) throw new Error("No sell orders available");
-      orderPrice = book.asks[0].price;
-    } else {
-      if (!book.bids.length) throw new Error("No buy orders available");
-      orderPrice = book.bids[0].price;
+    const book = await getOrderBook(pair, 50);
+    /* Market BUY → consume lowest asks; Market SELL → highest bids */
+    const levels = side === "buy" ? book.asks : book.bids;
+    if (!levels.length) {
+      throw new Error("No liquidity for market order");
     }
-  }
-
-  if (!Number.isFinite(orderPrice) || orderPrice <= 0) {
-    throw new Error("Price must be greater than 0");
-  }
-
-  const cost = toDecimal(orderPrice * quantity);
-  if (cost < MIN_ORDER_USD) {
-    throw new Error(`Minimum order value is $${MIN_ORDER_USD}`);
-  }
-
-  /* --- LOCK BALANCE --- */
-  if (side === "buy") {
-    /* Lock quote asset (USDT) */
-    const totalLock = toDecimal(cost * (1 + FEE_RATE));  // cost + fee
-    await lockBalance(uid, quoteAsset, totalLock, `order_lock_buy_${pair}`);
+    execPrice = levels[0].price;
   } else {
-    /* Lock base asset (BTC) */
-    await lockBalance(uid, baseAsset, quantity, `order_lock_sell_${pair}`);
+    execPrice = validatePrice(price, cfg);
   }
 
-  /* --- CREATE ORDER --- */
-  const ordersRef = ref(db, "orders");
-  const newOrderRef = push(ordersRef);
-  const orderId = newOrderRef.key;
+  /* --- Validate quantity --- */
+  const qty = validateQuantity(quantity, cfg);
+  const cost = mulD(execPrice, qty, cfg.pricePrecision + cfg.qtyPrecision);
 
-  const orderData = {
+  if (cost < cfg.minOrderUSD) {
+    throw new Error(`Minimum order value is $${cfg.minOrderUSD}`);
+  }
+
+  /* --- Lock funds --- */
+  if (side === "buy") {
+    /* Lock cost + fee in quote */
+    const totalLock = mulD(cost, 1 + cfg.feeRate, 8);
+    await lockBalance(uid, quote, totalLock, `order_lock_buy_${pair}`);
+  } else {
+    await lockBalance(uid, base, qty, `order_lock_sell_${pair}`);
+  }
+
+  /* --- Create order record --- */
+  const ordersRef = ref(db, "orders");
+  const orderRef  = push(ordersRef);
+  const orderId   = orderRef.key;
+
+  const order = {
     orderId,
     uid,
     pair,
-    baseAsset,
-    quoteAsset,
+    baseAsset: base,
+    quoteAsset: quote,
     side,
     type,
-    price: toDecimal(orderPrice),
-    quantity: toDecimal(quantity),
+    price: fix(execPrice, cfg.pricePrecision),
+    quantity: fix(qty, cfg.qtyPrecision),
     filled: 0,
-    remaining: toDecimal(quantity),
+    remaining: fix(qty, cfg.qtyPrecision),
     status: "open",
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
 
-  await set(newOrderRef, orderData);
+  await set(orderRef, order);
 
-  /* Save to order book */
-  const bookSide = side === "buy" ? "bids" : "asks";
-  const bookPath = `orderBook/${pair}/${bookSide}/${priceKey(orderPrice)}`;
-  const bookRef = ref(db, bookPath);
-  await runTransaction(bookRef, (current) => {
-    const c = current || { totalQty: 0, orders: {} };
-    c.totalQty = toDecimal(Number(c.totalQty || 0) + quantity);
-    c.orders = c.orders || {};
-    c.orders[orderId] = {
-      uid,
-      qty: toDecimal(quantity),
-      remaining: toDecimal(quantity),
-      createdAt: Date.now()
-    };
-    return c;
-  });
-
-  /* Also index order for user */
+  /* Mirror to user's orders */
   await set(ref(db, `users/${uid}/orders/${orderId}`), {
     orderId,
     pair,
     side,
     type,
-    price: toDecimal(orderPrice),
-    quantity: toDecimal(quantity),
+    price: order.price,
+    quantity: order.quantity,
     filled: 0,
-    remaining: toDecimal(quantity),
+    remaining: order.remaining,
     status: "open",
-    createdAt: Date.now()
+    createdAt: order.createdAt
   });
 
-  /* --- RUN MATCHING ENGINE --- */
+  /* For LIMIT — add to book */
+  if (type === "limit") {
+    await addToBook(pair, side, execPrice, orderId, uid, qty, cfg);
+  }
+
+  /* --- Run matching engine --- */
   await runMatchingEngine(pair);
 
-  /* Fetch final order state */
+  /* Fetch final state */
   const finalSnap = await get(ref(db, `orders/${orderId}`));
   return finalSnap.val();
 }
 
 /* =========================================================
-   8. CANCEL ORDER
+   9. CANCEL ORDER
    ========================================================= */
 export async function cancelOrder({ uid, orderId }) {
-  const orderRef = ref(db, `orders/${orderId}`);
-  const snap = await get(orderRef);
+  const snap = await get(ref(db, `orders/${orderId}`));
   if (!snap.exists()) throw new Error("Order not found");
-
   const order = snap.val();
   if (order.uid !== uid) throw new Error("Not your order");
   if (order.status === "filled" || order.status === "cancelled") {
     throw new Error("Order cannot be cancelled");
   }
 
-  const remaining = Number(order.remaining) || 0;
+  const cfg = getPairConfig(order.pair);
+  const remaining = fix(Number(order.remaining) || 0);
 
-  /* Unlock remaining balance */
+  /* Unlock remaining */
   if (order.side === "buy") {
-    /* Unlock USDT: remaining * price * (1+fee) */
-    const unlockAmt = toDecimal(remaining * order.price * (1 + FEE_RATE));
-    await unlockBalance(uid, order.quoteAsset, unlockAmt, `cancel_${orderId}`);
+    const unlock = mulD(remaining, order.price, 8);
+    const withFee = mulD(unlock, 1 + cfg.feeRate, 8);
+    await unlockBalance(uid, order.quoteAsset, withFee, `cancel_${orderId}`);
   } else {
-    /* Unlock BTC */
     await unlockBalance(uid, order.baseAsset, remaining, `cancel_${orderId}`);
   }
 
-  /* Update order status */
-  await update(orderRef, {
+  /* Update order */
+  await update(ref(db, `orders/${orderId}`), {
     status: "cancelled",
     updatedAt: Date.now()
   });
-
-  /* Remove from order book */
-  const bookSide = order.side === "buy" ? "bids" : "asks";
-  const bookPath = `orderBook/${order.pair}/${bookSide}/${priceKey(order.price)}`;
-  const bookRef = ref(db, bookPath);
-  await runTransaction(bookRef, (current) => {
-    if (!current) return current;
-    if (current.orders && current.orders[orderId]) {
-      current.totalQty = toDecimal(Number(current.totalQty || 0) - remaining);
-      delete current.orders[orderId];
-    }
-    if (current.totalQty <= 0.00000001) {
-      /* Empty level — remove */
-      return null;
-    }
-    return current;
-  });
-
-  /* Update user order index */
   await update(ref(db, `users/${uid}/orders/${orderId}`), {
     status: "cancelled",
     updatedAt: Date.now()
   });
 
+  /* Remove from book */
+  if (order.type === "limit") {
+    await removeFromBook(order.pair, order.side, order.price, orderId, remaining, cfg);
+  }
+
   return { ok: true, orderId };
 }
 
 /* =========================================================
-   9. MATCHING ENGINE
-   Called after every new order.
-   Matches highest bid vs lowest ask.
+   10. MATCHING ENGINE
+   Price-time priority
    ========================================================= */
-async function runMatchingEngine(pair = DEFAULT_PAIR) {
-  /* Load full order book sorted */
-  const book = await loadFullBook(pair);
-
-  let bestBid = book.bids[0] || null;   // highest price
-  let bestAsk = book.asks[0] || null;   // lowest price
-
-  let safety = 0;
-  while (bestBid && bestAsk && bestBid.price >= bestAsk.price && safety < 100) {
-    safety++;
-
-    /* Find oldest order at this price level for both sides */
-    const bidOrder = pickOldestOrder(bestBid.orders);
-    const askOrder = pickOldestOrder(bestAsk.orders);
-
-    if (!bidOrder || !askOrder) break;
-
-    const tradePrice = toDecimal(bestAsk.price);  // Price = the resting (older) order's price
-    /* Convention: price of the earlier order (maker) is used */
-
-    /* Determine trade quantity = min of both remainings */
-    const qty = Math.min(Number(bidOrder.remaining), Number(askOrder.remaining));
-    if (qty <= 0) break;
-
-    /* Execute trade */
-    await executeTrade({
-      pair,
-      buyerOrderId: bidOrder.orderId,
-      sellerOrderId: askOrder.orderId,
-      buyerUid: bidOrder.uid,
-      sellerUid: askOrder.uid,
-      price: tradePrice,
-      quantity: toDecimal(qty),
-      baseAsset: pair.startsWith("BTC") ? "BTC" : pair.replace("USDT", ""),
-      quoteAsset: "USDT"
-    });
-
-    /* Reload book for next iteration */
-    const newBook = await loadFullBook(pair);
-    bestBid = newBook.bids[0] || null;
-    bestAsk = newBook.asks[0] || null;
-  }
-}
-
-/* Load full book into memory */
-async function loadFullBook(pair) {
+async function loadFullBook(pair, cfg) {
   const [bidsSnap, asksSnap] = await Promise.all([
     get(ref(db, `orderBook/${pair}/bids`)),
     get(ref(db, `orderBook/${pair}/asks`))
   ]);
 
-  const bids = [];
-  const asks = [];
+  const bids = [], asks = [];
 
-  if (bidsSnap.exists()) {
-    const v = bidsSnap.val();
+  const collect = (side, snap, arr, sorter) => {
+    if (!snap.exists()) return;
+    const v = snap.val();
     Object.keys(v).forEach(p => {
       const level = v[p];
       if (!level.orders) return;
       Object.keys(level.orders).forEach(oid => {
-        bids.push({
+        const o = level.orders[oid];
+        arr.push({
           price: Number(p),
           orderId: oid,
-          uid: level.orders[oid].uid,
-          remaining: Number(level.orders[oid].remaining) || 0,
-          createdAt: level.orders[oid].createdAt || 0
+          uid: o.uid,
+          remaining: Number(o.remaining) || 0,
+          createdAt: o.createdAt || 0
         });
       });
     });
-    bids.sort((a, b) => b.price - a.price || a.createdAt - b.createdAt);
-  }
+    arr.sort(sorter);
+  };
 
-  if (asksSnap.exists()) {
-    const v = asksSnap.val();
-    Object.keys(v).forEach(p => {
-      const level = v[p];
-      if (!level.orders) return;
-      Object.keys(level.orders).forEach(oid => {
-        asks.push({
-          price: Number(p),
-          orderId: oid,
-          uid: level.orders[oid].uid,
-          remaining: Number(level.orders[oid].remaining) || 0,
-          createdAt: level.orders[oid].createdAt || 0
-        });
-      });
-    });
-    asks.sort((a, b) => a.price - b.price || a.createdAt - b.createdAt);
-  }
+  collect("bids", bidsSnap, bids, (a, b) => b.price - a.price || a.createdAt - b.createdAt);
+  collect("asks", asksSnap, asks, (a, b) => a.price - b.price || a.createdAt - b.createdAt);
 
   return { bids, asks };
 }
 
-function pickOldestOrder(ordersObj) {
-  let oldest = null;
-  Object.keys(ordersObj).forEach(oid => {
-    const o = ordersObj[oid];
-    o.orderId = oid;
-    if (!oldest || (o.createdAt || 0) < (oldest.createdAt || 0)) {
-      oldest = o;
-    }
-  });
-  return oldest;
+async function runMatchingEngine(pair) {
+  const cfg = getPairConfig(pair);
+
+  for (let i = 0; i < 200; i++) {     // safety limit
+    const book = await loadFullBook(pair, cfg);
+    const bestBid = book.bids[0];
+    const bestAsk = book.asks[0];
+    if (!bestBid || !bestAsk) break;
+    if (bestBid.price < bestAsk.price) break;      // no cross
+
+    /* Price = earlier (maker) order's price */
+    const makerIsBid = bestBid.createdAt <= bestAsk.createdAt;
+    const tradePrice = makerIsBid ? bestBid.price : bestAsk.price;
+
+    const qty = Math.min(bestBid.remaining, bestAsk.remaining);
+    if (qty <= MIN_REMAINING_DUST) break;
+
+    await executeTrade({
+      pair,
+      cfg,
+      buyerOrderId: bestBid.orderId,
+      sellerOrderId: bestAsk.orderId,
+      buyerUid: bestBid.uid,
+      sellerUid: bestAsk.uid,
+      price: tradePrice,
+      quantity: fix(qty, cfg.qtyPrecision)
+    });
+  }
 }
 
 /* =========================================================
-   10. EXECUTE TRADE (atomic — both sides)
+   11. EXECUTE TRADE (atomic both sides)
    ========================================================= */
 async function executeTrade({
-  pair, buyerOrderId, sellerOrderId,
+  pair, cfg,
+  buyerOrderId, sellerOrderId,
   buyerUid, sellerUid,
-  price, quantity, baseAsset, quoteAsset
+  price, quantity
 }) {
-  /* Calculate amounts */
-  const cost = toDecimal(price * quantity);       // total quote (USDT)
-  const buyerFee = toDecimal(cost * FEE_RATE);
-  const sellerFee = toDecimal(cost * FEE_RATE);
-  const sellerProceeds = toDecimal(cost - sellerFee);
+  const { base, quote } = cfg;
 
-  /* ---------- BUYER SIDE ---------- */
-  /* Buyer already locked: cost + fee in USDT.
-     Now spend (cost + fee) from locked. */
-  await spendLocked(buyerUid, quoteAsset, toDecimal(cost + buyerFee), `trade_${buyerOrderId}`);
+  const cost = mulD(price, quantity, 8);
+  const buyerFee  = mulD(cost, cfg.feeRate, 8);
+  const sellerFee = mulD(cost, cfg.feeRate, 8);
+  const sellerProceeds = subD(cost, sellerFee, 8);
 
-  /* Credit BTC to buyer's available */
-  await creditBalance(buyerUid, baseAsset, quantity, `trade_${buyerOrderId}`);
+  /* ---------- BUYER ---------- */
+  /* Buyer locked: cost + fee.  Spend that.  Credit base. */
+  await spendLocked(buyerUid, quote, addD(cost, buyerFee, 8), `trade_buy_${buyerOrderId}`);
+  await creditBalance(buyerUid, base, quantity, `trade_buy_${buyerOrderId}`);
 
-  /* ---------- SELLER SIDE ---------- */
-  /* Seller already locked: quantity in BTC.
-     Spend quantity from locked. */
-  await spendLocked(sellerUid, baseAsset, quantity, `trade_${sellerOrderId}`);
+  /* ---------- SELLER ---------- */
+  await spendLocked(sellerUid, base, quantity, `trade_sell_${sellerOrderId}`);
+  await creditBalance(sellerUid, quote, sellerProceeds, `trade_sell_${sellerOrderId}`);
 
-  /* Credit USDT (minus fee) to seller's available */
-  await creditBalance(sellerUid, quoteAsset, sellerProceeds, `trade_${sellerOrderId}`);
+  /* ---------- ORDERS ---------- */
+  await updateOrderAfterFill(buyerOrderId, quantity, cfg);
+  await updateOrderAfterFill(sellerOrderId, quantity, cfg);
 
-  /* ---------- UPDATE ORDERS ---------- */
-  await updateOrderAfterFill(buyerOrderId, quantity, pair, "buy", price);
-  await updateOrderAfterFill(sellerOrderId, quantity, pair, "sell", price);
-
-  /* ---------- SAVE TRADE ---------- */
+  /* ---------- TRADE RECORD ---------- */
   const tradeRef = push(ref(db, "trades"));
   const tradeId = tradeRef.key;
-  await set(tradeRef, {
+
+  const trade = {
     tradeId,
     pair,
     buyerOrderId,
@@ -631,27 +678,29 @@ async function executeTrade({
     buyerFee,
     sellerFee,
     executedAt: Date.now()
-  });
+  };
+  await set(tradeRef, trade);
 
-  /* Save to both users' trade histories */
+  /* Mirror to user histories */
   await set(ref(db, `users/${buyerUid}/trades/${tradeId}`), {
-    tradeId, pair, side: "buy", price, quantity, cost, fee: buyerFee, executedAt: Date.now()
+    tradeId, pair, side: "buy", price, quantity, cost, fee: buyerFee, executedAt: trade.executedAt
   });
   await set(ref(db, `users/${sellerUid}/trades/${tradeId}`), {
-    tradeId, pair, side: "sell", price, quantity, cost, fee: sellerFee, executedAt: Date.now()
+    tradeId, pair, side: "sell", price, quantity, cost, fee: sellerFee, executedAt: trade.executedAt
   });
 }
 
 /* Update order status after a fill */
-async function updateOrderAfterFill(orderId, qty, pair, side, price) {
+async function updateOrderAfterFill(orderId, qty, cfg) {
   const orderRef = ref(db, `orders/${orderId}`);
-  const result = await runTransaction(orderRef, (current) => {
+
+  const result = await runTransaction(orderRef, current => {
     if (!current) return current;
-    const filled = toDecimal(Number(current.filled || 0) + Number(qty));
-    const remaining = toDecimal(Number(current.quantity) - filled);
+    const filled = fix(Number(current.filled || 0) + qty, cfg.qtyPrecision);
+    const remaining = fix(Number(current.quantity) - filled, cfg.qtyPrecision);
     current.filled = filled;
     current.remaining = remaining < 0 ? 0 : remaining;
-    current.status = remaining <= 0.00000001 ? "filled" : "partial";
+    current.status = remaining <= MIN_REMAINING_DUST ? "filled" : "partial";
     current.updatedAt = Date.now();
     return current;
   });
@@ -659,7 +708,7 @@ async function updateOrderAfterFill(orderId, qty, pair, side, price) {
   const updated = result.snapshot.val();
   if (!updated) return;
 
-  /* Sync user order index */
+  /* Mirror user */
   await update(ref(db, `users/${updated.uid}/orders/${orderId}`), {
     filled: updated.filled,
     remaining: updated.remaining,
@@ -667,43 +716,34 @@ async function updateOrderAfterFill(orderId, qty, pair, side, price) {
     updatedAt: Date.now()
   });
 
-  /* Update order book */
-  const bookSide = side === "buy" ? "bids" : "asks";
-  const bookRef = ref(db, `orderBook/${pair}/${bookSide}/${priceKey(price)}`);
-  await runTransaction(bookRef, (current) => {
-    if (!current || !current.orders) return current;
-    if (current.orders[orderId]) {
-      current.orders[orderId].remaining =
-        toDecimal(Number(current.orders[orderId].remaining || 0) - Number(qty));
-      current.totalQty =
-        toDecimal(Number(current.totalQty || 0) - Number(qty));
-
-      if (current.orders[orderId].remaining <= 0.00000001) {
-        delete current.orders[orderId];
-      }
-    }
-
-    /* Remove level if empty */
-    const hasOrders = current.orders && Object.keys(current.orders).length > 0;
-    if (!hasOrders || current.totalQty <= 0.00000001) {
-      return null;
-    }
-    return current;
-  });
-}
-
-/* =========================================================
-   11. INITIALIZE — Create wallets on first order
-   ========================================================= */
-export async function ensureWallets(uid) {
-  const assets = ["USDT", "BTC", "ETH", "XRP", "SOL", "BNB", "DOGE"];
-  for (const asset of assets) {
-    await ensureBalance(uid, asset);
+  /* Book update */
+  if (updated.type === "limit") {
+    await updateBookAfterFill(
+      updated.pair,
+      updated.side,
+      updated.price,
+      orderId,
+      qty,
+      cfg
+    );
   }
 }
 
 /* =========================================================
-   12. EXPORT
+   12. HELPERS
+   ========================================================= */
+export async function ensureWallets(uid) {
+  const assets = ["USDT", "BTC", "ETH", "XRP", "SOL", "BNB", "DOGE"];
+  for (const a of assets) {
+    await ensureBalanceNode(uid, a);
+  }
+}
+
+/* Expose for debugging */
+export const _internal = { fix, addD, subD, mulD, divD };
+
+/* =========================================================
+   13. EXPORT
    ========================================================= */
 export default {
   placeOrder,
@@ -715,5 +755,6 @@ export default {
   debitBalance,
   lockBalance,
   unlockBalance,
+  spendLocked,
   ensureWallets
 };
