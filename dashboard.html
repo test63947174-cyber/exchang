@@ -61,7 +61,13 @@
     .hamburger:hover { border-color: var(--neon-cyan); box-shadow: 0 0 16px rgba(0,240,255,0.35); }
     .hamburger span { display: block; width: 22px; height: 2px; background: var(--neon-cyan); border-radius: 2px; }
     .nav-brand { display: flex; align-items: center; gap: 10px; font-family: 'Orbitron', sans-serif; font-size: 1.25rem; font-weight: 800; letter-spacing: 1.5px; text-decoration: none; }
-    .logo-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; font-size: 16px; font-weight: 800; color: #041018; background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green)); box-shadow: 0 0 18px rgba(0,240,255,0.55); animation: pulse 3s ease-in-out infinite; }
+    .logo-icon {
+      width: 34px; height: 34px; display: grid; place-items: center;
+      border-radius: 10px; font-size: 16px; font-weight: 800; color: #041018;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-green));
+      box-shadow: 0 0 18px rgba(0,240,255,0.55);
+      animation: pulse 3s ease-in-out infinite;
+    }
     @keyframes pulse { 0%,100% { box-shadow: 0 0 18px rgba(0,240,255,0.55); } 50% { box-shadow: 0 0 30px rgba(0,255,163,0.85); } }
     .brand-gradient { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green), var(--neon-purple)); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .nav-actions { display: flex; align-items: center; gap: 10px; }
@@ -73,6 +79,8 @@
     .btn-ghost:hover { border-color: var(--neon-cyan); color: var(--neon-cyan); box-shadow: 0 0 18px rgba(0,240,255,0.25); }
     .btn-primary { background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green)); color: #041018; box-shadow: 0 0 22px rgba(0,240,255,0.35); }
     .btn-primary:hover { box-shadow: 0 0 34px rgba(0,255,163,0.6); transform: translateY(-2px); }
+    .btn-pink { background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple)); color: #fff; box-shadow: 0 0 22px rgba(255,46,147,0.4); }
+    .btn-pink:hover { box-shadow: 0 0 34px rgba(255,46,147,0.7); transform: translateY(-2px); }
 
     /* ============ SIDEBAR ============ */
     .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 290px; max-width: 85vw; background: rgba(6, 10, 26, 0.97); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); border-right: 1px solid rgba(0, 240, 255, 0.15); padding: 22px 0 20px; transform: translateX(-100%); transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1); z-index: 300; display: flex; flex-direction: column; overflow-y: auto; box-shadow: 30px 0 60px rgba(0,0,0,0.5); }
@@ -127,7 +135,7 @@
     .balance-amount { font-family: 'Orbitron', sans-serif; font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; letter-spacing: 1px; margin-bottom: 6px; background: linear-gradient(90deg, var(--neon-cyan), var(--neon-green)); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .balance-change { color: var(--text-dim); font-size: 0.82rem; font-weight: 400; }
     .balance-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-    .balance-actions .btn { padding: 11px 20px; font-size: 0.82rem; }
+    .balance-actions .btn { padding: 12px 22px; font-size: 0.85rem; }
 
     /* ============ SECTION HEADS ============ */
     .section-head { display: flex; justify-content: space-between; align-items: center; margin: 40px 0 20px; flex-wrap: wrap; gap: 12px; }
@@ -193,32 +201,17 @@
     .my-token-info { flex: 1; min-width: 0; }
     .my-token-info h4 { font-size: 0.98rem; font-weight: 600; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .my-token-info .sym { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 6px; }
-    .my-token-status {
-      display: inline-block;
-      font-size: 0.68rem;
-      padding: 3px 10px;
-      border-radius: 20px;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-    }
+    .my-token-status { display: inline-block; font-size: 0.68rem; padding: 3px 10px; border-radius: 20px; font-weight: 600; letter-spacing: 0.5px; }
     .status-pending  { color: #ffbd2e; background: rgba(255,189,46,0.12); border: 1px solid rgba(255,189,46,0.3); }
     .status-approved { color: var(--neon-green); background: rgba(0,255,163,0.12); border: 1px solid rgba(0,255,163,0.3); }
     .status-rejected { color: var(--danger); background: rgba(255,77,109,0.12); border: 1px solid rgba(255,77,109,0.3); }
 
-    .empty-state {
-      grid-column: 1 / -1;
-      text-align: center;
-      padding: 40px 20px;
-      background: var(--bg-card);
-      border: 1px dashed rgba(0,240,255,0.25);
-      border-radius: 16px;
-      color: var(--text-dim);
-    }
+    .empty-state { grid-column: 1 / -1; text-align: center; padding: 40px 20px; background: var(--bg-card); border: 1px dashed rgba(0,240,255,0.25); border-radius: 16px; color: var(--text-dim); }
     .empty-state .emoji { font-size: 2.4rem; margin-bottom: 8px; display: block; }
     .empty-state a { color: var(--neon-cyan); text-decoration: none; font-weight: 600; }
     .empty-state a:hover { color: var(--neon-green); }
 
-    /* ============ RND FEATURED (LIVE) ============ */
+    /* ============ RND FEATURED ============ */
     .rnd-featured {
       position: relative; margin-top: 40px;
       background: linear-gradient(135deg, rgba(255,46,147,0.15), rgba(123,92,255,0.15));
@@ -236,13 +229,7 @@
       background: radial-gradient(circle, rgba(255,46,147,0.25), transparent 70%);
       border-radius: 50%; pointer-events: none;
     }
-    .rnd-badge {
-      display: inline-block; padding: 5px 14px; border-radius: 50px;
-      background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple));
-      color: #fff; font-size: 0.7rem; font-weight: 700;
-      letter-spacing: 1.2px; text-transform: uppercase;
-      margin-bottom: 14px; box-shadow: 0 0 18px rgba(255,46,147,0.5);
-    }
+    .rnd-badge { display: inline-block; padding: 5px 14px; border-radius: 50px; background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple)); color: #fff; font-size: 0.7rem; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 14px; box-shadow: 0 0 18px rgba(255,46,147,0.5); }
     .rnd-featured h2 { font-family: 'Orbitron', sans-serif; font-size: clamp(1.4rem, 3vw, 2rem); font-weight: 900; letter-spacing: 1px; margin-bottom: 10px; }
     .rnd-featured h2 .grad { background: linear-gradient(90deg, var(--neon-pink), var(--neon-purple), var(--neon-cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
     .rnd-featured p { color: var(--text-dim); font-size: 0.9rem; line-height: 1.65; font-weight: 300; margin-bottom: 18px; max-width: 500px; }
@@ -265,24 +252,10 @@
       display: inline-block;
       white-space: nowrap;
     }
-    .btn-rnd.buy {
-      background: linear-gradient(90deg, var(--neon-green), #00d484);
-      color: #041018;
-      box-shadow: 0 0 22px rgba(0, 255, 163, 0.4);
-    }
-    .btn-rnd.buy:hover {
-      box-shadow: 0 0 34px rgba(0, 255, 163, 0.7);
-      transform: translateY(-2px);
-    }
-    .btn-rnd.sell {
-      background: linear-gradient(90deg, var(--danger), #d63450);
-      color: #fff;
-      box-shadow: 0 0 22px rgba(255, 77, 109, 0.4);
-    }
-    .btn-rnd.sell:hover {
-      box-shadow: 0 0 34px rgba(255, 77, 109, 0.7);
-      transform: translateY(-2px);
-    }
+    .btn-rnd.buy { background: linear-gradient(90deg, var(--neon-green), #00d484); color: #041018; box-shadow: 0 0 22px rgba(0,255,163,0.4); }
+    .btn-rnd.buy:hover { box-shadow: 0 0 34px rgba(0,255,163,0.7); transform: translateY(-2px); }
+    .btn-rnd.sell { background: linear-gradient(90deg, var(--danger), #d63450); color: #fff; box-shadow: 0 0 22px rgba(255,77,109,0.4); }
+    .btn-rnd.sell:hover { box-shadow: 0 0 34px rgba(255,77,109,0.7); transform: translateY(-2px); }
     .rnd-updated { font-size: 0.72rem; color: var(--text-dim); margin-top: 12px; }
 
     .rnd-right { text-align: center; position: relative; z-index: 1; }
@@ -296,19 +269,10 @@
       animation: floatRnd 3s ease-in-out infinite;
     }
     @keyframes floatRnd { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-    .verified-badge {
-      display: inline-block;
-      font-size: 0.7rem;
-      color: var(--neon-green);
-      margin-top: 6px;
-      padding: 4px 10px;
-      background: rgba(0,255,163,0.1);
-      border: 1px solid rgba(0,255,163,0.3);
-      border-radius: 20px;
-    }
+    .verified-badge { display: inline-block; font-size: 0.7rem; color: var(--neon-green); margin-top: 6px; padding: 4px 10px; background: rgba(0,255,163,0.1); border: 1px solid rgba(0,255,163,0.3); border-radius: 20px; }
 
     /* ============ QUICK ACTIONS ============ */
-    .quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 40px; }
+    .quick-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 20px; }
     .quick-action {
       display: flex; align-items: center; gap: 14px;
       padding: 18px 20px;
@@ -335,12 +299,7 @@
     .tx-type.sell { color: var(--danger); background: rgba(255,77,109,0.1); }
     .tx-type.dep  { color: var(--neon-cyan); background: rgba(0,240,255,0.1); }
 
-    #txBody td[colspan] {
-      text-align: center;
-      padding: 40px 20px;
-      color: var(--text-dim);
-      font-style: italic;
-    }
+    #txBody td[colspan] { text-align: center; padding: 40px 20px; color: var(--text-dim); font-style: italic; }
 
     /* ============ TOAST ============ */
     .toast { position: fixed; top: 26px; left: 50%; transform: translateX(-50%) translateY(-140px); background: rgba(5,15,30,0.96); border: 1px solid var(--success); border-radius: 12px; padding: 14px 22px; color: var(--text-main); font-size: 0.9rem; box-shadow: 0 0 30px rgba(0,255,163,0.4); display: flex; align-items: center; gap: 10px; z-index: 999; opacity: 0; transition: all 0.5s cubic-bezier(0.22, 1, 0.36, 1); max-width: 90vw; }
@@ -372,7 +331,8 @@
       .quick-actions { grid-template-columns: 1fr; }
       .rnd-logo { width: 80px; height: 80px; font-size: 2rem; }
       .my-tokens-grid { grid-template-columns: 1fr; }
-      .btn-rnd { flex: 1 1 auto; text-align: center; }
+      .balance-actions { flex-direction: column; }
+      .balance-actions .btn { width: 100%; text-align: center; }
     }
   </style>
 </head>
@@ -409,11 +369,15 @@
   </div>
   <nav class="sidebar-menu">
     <a href="dashboard.html"  class="menu-item active"><span class="mi-icon">🏠</span> Dashboard</a>
+    <a href="deposit.html"    class="menu-item"><span class="mi-icon">📥</span> Deposit</a>
+    <a href="withdraw.html"   class="menu-item"><span class="mi-icon">📤</span> Withdraw</a>
+    <div class="menu-divider"></div>
     <a href="market.html"     class="menu-item"><span class="mi-icon">📈</span> Markets</a>
     <a href="trade.html"      class="menu-item"><span class="mi-icon">💱</span> Trade</a>
     <a href="wallet.html"     class="menu-item"><span class="mi-icon">💰</span> Wallet</a>
     <a href="orders.html"     class="menu-item"><span class="mi-icon">📋</span> Orders</a>
     <a href="list-token.html" class="menu-item"><span class="mi-icon">🚀</span> List Token</a>
+    <div class="menu-divider"></div>
     <a href="profile.html"    class="menu-item"><span class="mi-icon">👤</span> Profile</a>
     <a href="settings.html"   class="menu-item"><span class="mi-icon">⚙️</span> Settings</a>
     <div class="menu-divider"></div>
@@ -450,8 +414,8 @@
         <div class="balance-change" id="balanceChange">Verifying…</div>
       </div>
       <div class="balance-actions">
-        <a href="wallet.html" class="btn btn-primary">💰 Deposit</a>
-        <a href="wallet.html" class="btn btn-ghost">💸 Withdraw</a>
+        <a href="deposit.html"  class="btn btn-primary">📥 Deposit</a>
+        <a href="withdraw.html" class="btn btn-pink">📤 Withdraw</a>
       </div>
     </div>
   </div>
@@ -531,10 +495,10 @@
     <h2>Quick Actions</h2>
   </div>
   <div class="quick-actions">
+    <a href="deposit.html"           class="quick-action"><div class="qa-icon">📥</div><div><h4>Deposit</h4><p>Add crypto funds</p></div></a>
+    <a href="withdraw.html"          class="quick-action"><div class="qa-icon">📤</div><div><h4>Withdraw</h4><p>Send funds out</p></div></a>
     <a href="trade.html?action=buy"  class="quick-action"><div class="qa-icon">💰</div><div><h4>Buy Crypto</h4><p>Instant purchase</p></div></a>
-    <a href="trade.html?action=sell" class="quick-action"><div class="qa-icon">💸</div><div><h4>Sell Crypto</h4><p>Cash out fast</p></div></a>
     <a href="list-token.html"        class="quick-action"><div class="qa-icon">🚀</div><div><h4>List Token</h4><p>Launch your coin</p></div></a>
-    <a href="profile.html"           class="quick-action"><div class="qa-icon">👤</div><div><h4>My Profile</h4><p>Account settings</p></div></a>
   </div>
 
   <!-- ================= RECENT ACTIVITY ================= -->
