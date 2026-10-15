@@ -1,20 +1,21 @@
 /* =========================================================
    Nexbit — Trade Page
    File: trade.js
-   Version: 5.0 (Market + Limit orders, real internal engine)
+   Version: 6.0 (Fixed — real order placement)
 
-   FEATURES:
-   - Live chart (TradingView Lightweight Charts)
-   - Internal order book (from Firebase, not Binance)
-   - Real order placement via engine.js — Market + Limit
-   - Balance-aware Buy/Sell with locked/available
-   - Recent trades feed
-   - Real-time order book refresh
+   FIXES in this version:
+   - Removed stale "Trading not available yet" message
+   - Real engine.placeOrder() call
+   - Coin selection correct (loads from URL properly)
+   - Internal order book (Firebase, not Binance)
+   - Live recent trades
+   - Market + Limit support
+   - Balance display updates in real-time
 
    ⚠ SECURITY NOTE:
-   This runs client-side for internal testing only.
-   Before public launch, ALL order + balance logic in
-   engine.js must move to Cloud Functions.
+   Client-side for internal testing only.
+   Move all order + balance logic to Cloud Functions
+   before public launch.
    ========================================================= */
 
 import { initializeApp, getApps, getApp }
@@ -57,7 +58,7 @@ const RND_ADDRESS   = "0xcF1FbF18bE9202865bcf88E6349B9D207F75942d";
 const RND_BUY_URL   = `https://pancakeswap.finance/swap?chain=bsc&outputCurrency=${RND_ADDRESS}`;
 const RND_SELL_URL  = `https://pancakeswap.finance/swap?chain=bsc&inputCurrency=${RND_ADDRESS}`;
 
-/* Only BTC is enabled for internal trading in this milestone */
+/* Only BTC is enabled for internal trading (whitelist) */
 const INTERNAL_TRADING_PAIRS = {
   BTC: "BTCUSDT"
 };
@@ -87,12 +88,12 @@ let currentPrice   = null;
 let currentUser    = null;
 let currentTF      = "1m";
 
-/* Order type per side (buy/sell): "limit" | "market" */
+/* Order type per side */
 const orderType = { buy: "limit", sell: "limit" };
 
-/* Balances for the currently selected asset pair */
-let balanceBase   = { available: 0, locked: 0 };   // e.g. BTC
-let balanceQuote  = { available: 0, locked: 0 };   // e.g. USDT
+/* Balances for the current pair */
+let balanceBase   = { available: 0, locked: 0 };
+let balanceQuote  = { available: 0, locked: 0 };
 
 /* Chart */
 let chart        = null;
@@ -109,6 +110,9 @@ let binanceWS   = null;
 let pricesFetched = false;
 
 const FEE_RATE = 0.001;
+
+/* Real-time listeners */
+const activeListeners = [];
 
 /* =========================================================
    5. HELPERS
@@ -142,7 +146,7 @@ function formatAmount(n) {
 function showToast(msg, ok = true) {
   const t = getElement("toast");
   const m = getElement("toastMsg");
-  if (!t || !m) return;
+  if (!t || !m) { console[ok ? "log" : "error"](msg); return; }
   m.textContent = msg;
   t.style.borderColor = ok ? "var(--success)" : "var(--danger)";
   t.style.boxShadow = ok
@@ -154,7 +158,7 @@ function showToast(msg, ok = true) {
     c.textContent = ok ? "✓" : "✕";
   }
   t.classList.add("show");
-  setTimeout(() => t.classList.remove("show"), 3200);
+  setTimeout(() => t.classList.remove("show"), 3500);
 }
 
 /* =========================================================
@@ -192,6 +196,7 @@ function loadCoinFromURL() {
   if (!sym || !coins[sym]) sym = "BTC";
   currentCoin = sym;
   currentPrice = coins[sym].price || null;
+  console.log("[trade.js] Selected coin:", currentCoin);
 }
 
 /* =========================================================
@@ -223,41 +228,41 @@ function updateCoinUI() {
   if (chg) {
     if (Number.isFinite(change)) {
       chg.textContent = (change >= 0 ? "▲ " : "▼ ") + Math.abs(change).toFixed(2) + "%";
-      chg.className = "chg " + (change >= 0 ? "up" : "down");
+      chg.className = "val " + (change >= 0 ? "up" : "down");
     } else {
       chg.textContent = "—";
-      chg.className = "chg";
+      chg.className = "val";
     }
   }
 
-  /* Prefill limit price input with live price if empty */
+  /* Prefill limit price inputs */
   const buyPriceInp  = getElement("buyPrice");
   const sellPriceInp = getElement("sellPrice");
-  if (buyPriceInp && !buyPriceInp.value && priceReady) {
-    buyPriceInp.value = price.toFixed(2);
-  }
-  if (sellPriceInp && !sellPriceInp.value && priceReady) {
-    sellPriceInp.value = price.toFixed(2);
-  }
+  if (buyPriceInp && !buyPriceInp.value && priceReady) buyPriceInp.value = price.toFixed(2);
+  if (sellPriceInp && !sellPriceInp.value && priceReady) sellPriceInp.value = price.toFixed(2);
 
+  /* Update Buy/Sell button labels to reflect current coin */
+  const buyBtn  = getElement("buyBtn");
+  const sellBtn = getElement("sellBtn");
+  if (buyBtn)  buyBtn.textContent  = "Buy " + currentCoin;
+  if (sellBtn) sellBtn.textContent = "Sell " + currentCoin;
+
+  /* Handle RND special case */
   renderRNDMode(coin);
-  updateBalanceLabels();
+
+  /* Update calc displays */
   updateCalc("buy");
   updateCalc("sell");
 }
 
-/* Show internal trading availability */
+/* When RND is selected, show PancakeSwap panel */
 function renderRNDMode(coin) {
   const isRND = currentCoin === "RND";
-  const isInternal = currentCoin in INTERNAL_TRADING_PAIRS;
 
-  const orderCard = document.querySelector(".order-card");
-  const tradeTabs = document.querySelector(".trade-tabs");
-  const buyForm = getElement("formBuy");
-  const sellForm = getElement("formSell");
-  const obCard = document.querySelector(".orderbook-card");
+  const formPanel = document.querySelector(".form-panel");
+  const obPanel   = document.querySelector(".ob-panel");
 
-  if (!orderCard) return;
+  if (!formPanel) return;
 
   /* Remove old panels */
   const oldRND = document.getElementById("rndPanel");
@@ -266,90 +271,47 @@ function renderRNDMode(coin) {
   if (oldNotice) oldNotice.remove();
 
   if (isRND) {
-    /* RND — external swap only */
-    if (tradeTabs) tradeTabs.style.display = "none";
-    if (buyForm)   buyForm.style.display = "none";
-    if (sellForm)  sellForm.style.display = "none";
-    if (obCard)    obCard.style.display = "none";
+    formPanel.style.display = "none";
+    if (obPanel) obPanel.style.display = "none";
 
     const panel = document.createElement("div");
     panel.id = "rndPanel";
-    panel.style.padding = "4px 0";
+    panel.style.cssText = "background:var(--bg-card);border:1px solid rgba(255,46,147,0.35);border-radius:14px;padding:20px;";
     panel.innerHTML = `
-      <div style="padding:18px;background:rgba(255,46,147,0.08);border:1px solid rgba(255,46,147,0.35);border-radius:14px;">
-        <div style="font-family:'Orbitron',sans-serif;font-weight:700;font-size:1rem;color:var(--neon-pink);margin-bottom:6px;">
-          ⚠ RND — External Swap Only
-        </div>
-        <p style="font-size:0.85rem;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
-          RND is currently traded <strong>only on PancakeSwap (BSC)</strong>.
-        </p>
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          <a href="${RND_BUY_URL}" target="_blank" rel="noopener noreferrer"
-             style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#041018;background:linear-gradient(90deg,var(--neon-green),#00d484);">
-            🟢 Buy RND on PancakeSwap ↗
-          </a>
-          <a href="${RND_SELL_URL}" target="_blank" rel="noopener noreferrer"
-             style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#fff;background:linear-gradient(90deg,var(--danger),#d63450);">
-            🔴 Sell RND on PancakeSwap ↗
-          </a>
-        </div>
+      <div style="font-family:'Orbitron',sans-serif;font-weight:700;font-size:1rem;color:var(--neon-pink);margin-bottom:8px;">
+        ⚠ RND — External Swap Only
+      </div>
+      <p style="font-size:0.85rem;color:var(--text-dim);line-height:1.6;margin-bottom:16px;">
+        RND is traded <strong>only on PancakeSwap (BSC)</strong>. Nexbit does not yet support internal RND trading.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <a href="${RND_BUY_URL}" target="_blank" rel="noopener noreferrer"
+           style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#041018;background:linear-gradient(90deg,var(--neon-green),#00d484);">
+          🟢 Buy RND on PancakeSwap ↗
+        </a>
+        <a href="${RND_SELL_URL}" target="_blank" rel="noopener noreferrer"
+           style="display:block;text-align:center;padding:13px;border-radius:10px;text-decoration:none;font-weight:700;color:#fff;background:linear-gradient(90deg,var(--danger),#d63450);">
+          🔴 Sell RND on PancakeSwap ↗
+        </a>
       </div>
     `;
-    orderCard.insertBefore(panel, orderCard.firstChild);
+    formPanel.parentNode.insertBefore(panel, formPanel);
     return;
   }
 
-  /* Show trading UI */
-  if (tradeTabs) tradeTabs.style.display = "";
-  if (buyForm)   buyForm.style.display = "";
-  if (sellForm)  sellForm.style.display = "";
-  if (obCard)    obCard.style.display = "";
+  /* Non-RND: restore normal UI */
+  formPanel.style.display = "";
+  if (obPanel) obPanel.style.display = "";
 
+  /* If non-internal pair, show notice */
+  const isInternal = currentCoin in INTERNAL_TRADING_PAIRS;
   if (!isInternal) {
-    /* Info banner for non-internal pairs */
-    const panel = document.createElement("div");
-    panel.id = "pairNotice";
-    panel.style.cssText = "padding:14px;background:rgba(255,189,46,0.08);border:1px solid rgba(255,189,46,0.3);border-radius:12px;margin-bottom:14px;font-size:0.82rem;color:#ffbd2e;line-height:1.5;";
-    panel.innerHTML = `
-      ⚠ <strong>${escapeHTML(coin.name)}</strong> internal trading is not yet enabled.<br>
-      Currently only <strong>BTC/USDT</strong> supports internal order placement.
-      Live price and chart are shown above.
-    `;
-    orderCard.insertBefore(panel, orderCard.firstChild);
-  }
-}
-
-/* Show available / locked balances above amount input */
-function updateBalanceLabels() {
-  const formBuy  = getElement("formBuy");
-  const formSell = getElement("formSell");
-
-  if (formBuy) {
-    let info = formBuy.querySelector(".balance-info");
-    if (!info) {
-      info = document.createElement("div");
-      info.className = "balance-info";
-      info.style.cssText = "display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-dim);margin-bottom:8px;padding:6px 10px;background:rgba(0,240,255,0.05);border-radius:8px;";
-      formBuy.insertBefore(info, formBuy.firstChild);
-    }
-    info.innerHTML = `
-      <span>Available: <strong style="color:var(--neon-green);">$${Number(balanceQuote.available).toFixed(2)}</strong></span>
-      <span>Locked: <strong style="color:#ffbd2e;">$${Number(balanceQuote.locked).toFixed(2)}</strong></span>
-    `;
-  }
-
-  if (formSell) {
-    let info = formSell.querySelector(".balance-info");
-    if (!info) {
-      info = document.createElement("div");
-      info.className = "balance-info";
-      info.style.cssText = "display:flex;justify-content:space-between;font-size:0.72rem;color:var(--text-dim);margin-bottom:8px;padding:6px 10px;background:rgba(0,240,255,0.05);border-radius:8px;";
-      formSell.insertBefore(info, formSell.firstChild);
-    }
-    info.innerHTML = `
-      <span>Available: <strong style="color:var(--neon-green);">${Number(balanceBase.available).toFixed(8)} ${currentCoin}</strong></span>
-      <span>Locked: <strong style="color:#ffbd2e;">${Number(balanceBase.locked).toFixed(8)}</strong></span>
-    `;
+    const notice = document.createElement("div");
+    notice.id = "pairNotice";
+    notice.style.cssText = "padding:12px 16px;background:rgba(255,189,46,0.08);border:1px solid rgba(255,189,46,0.3);border-radius:12px;margin-bottom:12px;font-size:0.8rem;color:#ffbd2e;line-height:1.5;grid-column:1/-1;";
+    notice.innerHTML = `⚠ <strong>${escapeHTML(coin.name)}</strong> internal trading is not yet enabled. Currently only <strong>BTC/USDT</strong> supports order placement. Live price and chart are shown.`;
+    const layout = document.querySelector(".trade-layout");
+    if (layout) layout.parentNode.insertBefore(notice, layout);
   }
 }
 
@@ -358,7 +320,10 @@ function updateBalanceLabels() {
    ========================================================= */
 function initChart() {
   const container = getElement("chartContainer");
-  if (!container || typeof LightweightCharts === "undefined") return false;
+  if (!container || typeof LightweightCharts === "undefined") {
+    console.warn("Chart init failed: LightweightCharts not loaded");
+    return false;
+  }
 
   chart = LightweightCharts.createChart(container, {
     width: container.clientWidth,
@@ -420,7 +385,6 @@ function initChart() {
 
 async function loadChartData(symbol, interval) {
   if (!candleSeries || !volumeSeries) return;
-
   try {
     const url = new URL(BINANCE_KLINES);
     url.searchParams.set("symbol", symbol);
@@ -515,20 +479,17 @@ function connectChartWS(symbol, interval) {
 async function refreshOrderBook() {
   const pair = INTERNAL_TRADING_PAIRS[currentCoin];
   if (!pair) {
-    const container = getElement("orderBookContent");
-    if (container) {
-      container.innerHTML = `
-        <div class="ob-loading">
-          <div style="color:var(--text-dim);font-size:0.85rem;text-align:center;padding:20px;">
-            Internal order book is not available for this asset.
-          </div>
-        </div>`;
-    }
+    const asksEl = getElement("obAsks");
+    const bidsEl = getElement("obBids");
+    if (asksEl) asksEl.innerHTML = "";
+    if (bidsEl) bidsEl.innerHTML = "";
+    const midPriceEl = getElement("obMidPrice");
+    if (midPriceEl) midPriceEl.textContent = "—";
     return;
   }
 
   try {
-    const book = await engine.getOrderBook(pair, 12);
+    const book = await engine.getOrderBook(pair, 10);
     renderOrderBook(book);
   } catch (err) {
     console.warn("Order book refresh failed:", err);
@@ -536,69 +497,60 @@ async function refreshOrderBook() {
 }
 
 function renderOrderBook(book) {
-  const container = getElement("orderBookContent");
-  if (!container) return;
+  const asksEl = getElement("obAsks");
+  const bidsEl = getElement("obBids");
+  const midPriceEl = getElement("obMidPrice");
+  const spreadEl = getElement("obSpread");
 
-  const bids = (book.bids || []).slice(0, 10);
-  const asks = (book.asks || []).slice(0, 10);
+  if (!asksEl || !bidsEl) return;
+
+  const bids = (book.bids || []).slice(0, 8);
+  const asks = (book.asks || []).slice(0, 8);
 
   if (!bids.length && !asks.length) {
-    container.innerHTML = `
-      <div class="ob-loading">
-        <div style="color:var(--text-dim);font-size:0.85rem;text-align:center;padding:20px;">
-          Order book is empty.
-          <br><small style="opacity:0.7;">Place an order to start trading.</small>
-        </div>
-      </div>`;
+    asksEl.innerHTML = `<div style="text-align:center;padding:20px;font-size:0.7rem;color:var(--text-dim);">No orders yet</div>`;
+    bidsEl.innerHTML = "";
+    if (midPriceEl) midPriceEl.textContent = "—";
+    if (spreadEl)   spreadEl.textContent = "Place an order to start";
     return;
   }
 
-  const maxAskAmt = Math.max(...asks.map(a => a.totalQty), 1);
-  const maxBidAmt = Math.max(...bids.map(b => b.totalQty), 1);
+  const maxAsk = Math.max(...asks.map(a => a.totalQty), 1);
+  const maxBid = Math.max(...bids.map(b => b.totalQty), 1);
 
   const bestAsk = asks[0] ? asks[0].price : 0;
   const bestBid = bids[0] ? bids[0].price : 0;
   const midPrice = bestAsk && bestBid ? (bestAsk + bestBid) / 2 : bestAsk || bestBid;
   const spread = bestAsk && bestBid ? bestAsk - bestBid : 0;
 
-  let html = `
-    <div class="ob-head"><span>Price (USDT)</span><span>Amount (BTC)</span></div>
-    <div class="ob-section-title">Asks (Selling)</div>
-  `;
+  if (midPriceEl) midPriceEl.textContent = formatPrice(midPrice);
+  if (spreadEl)   spreadEl.textContent = `Spread ${formatPrice(spread)}`;
 
-  [...asks].reverse().forEach(a => {
-    const pct = Math.min(100, (a.totalQty / maxAskAmt) * 100);
-    html += `
+  /* Asks (reversed so highest at top) */
+  asksEl.innerHTML = [...asks].reverse().map(a => {
+    const pct = Math.min(100, (a.totalQty / maxAsk) * 100);
+    return `
       <div class="ob-row ask">
         <div class="depth-bar" style="width:${pct}%"></div>
         <span class="price">${formatPrice(a.price)}</span>
         <span class="amount">${formatAmount(a.totalQty)}</span>
       </div>`;
-  });
+  }).join("");
 
-  html += `
-    <div class="ob-separator">
-      <span class="mid-price">${formatPrice(midPrice)}</span>
-      <span class="spread">Spread ${formatPrice(spread)}</span>
-    </div>
-    <div class="ob-section-title">Bids (Buying)</div>
-  `;
-
-  bids.forEach(b => {
-    const pct = Math.min(100, (b.totalQty / maxBidAmt) * 100);
-    html += `
+  /* Bids (highest at top) */
+  bidsEl.innerHTML = bids.map(b => {
+    const pct = Math.min(100, (b.totalQty / maxBid) * 100);
+    return `
       <div class="ob-row bid">
         <div class="depth-bar" style="width:${pct}%"></div>
         <span class="price">${formatPrice(b.price)}</span>
         <span class="amount">${formatAmount(b.totalQty)}</span>
       </div>`;
-  });
-
-  container.innerHTML = html;
+  }).join("");
 }
 
 /* =========================================================
-   11. RECENT TRADES (Internal)
+   11. RECENT TRADES
    ========================================================= */
 async function refreshRecentTrades() {
   const pair = INTERNAL_TRADING_PAIRS[currentCoin];
@@ -613,39 +565,21 @@ async function refreshRecentTrades() {
 }
 
 function renderRecentTrades(trades) {
-  let container = getElement("recentTradesContent");
-  if (!container) {
-    const obCard = document.querySelector(".orderbook-card");
-    if (!obCard) return;
-    const wrap = document.createElement("div");
-    wrap.style.cssText = "margin-top:16px;padding-top:14px;border-top:1px solid rgba(0,240,255,0.1);";
-    wrap.innerHTML = `
-      <div style="font-family:'Orbitron',sans-serif;font-size:0.85rem;font-weight:700;margin-bottom:10px;">Recent Trades</div>
-      <div id="recentTradesContent"></div>
-    `;
-    obCard.appendChild(wrap);
-    container = getElement("recentTradesContent");
-  }
+  const container = getElement("recentTradesList");
+  if (!container) return;
 
   if (!trades.length) {
-    container.innerHTML = `<div style="text-align:center;font-size:0.75rem;color:var(--text-dim);padding:10px;">No trades yet.</div>`;
+    container.innerHTML = `<div style="text-align:center;font-size:0.7rem;color:var(--text-dim);padding:10px;">No trades yet</div>`;
     return;
   }
 
-  container.innerHTML = trades.map(t => {
-    /* Color by taker side: buyer-initiated = green */
-    const isBuyerMaker = t.side === "buy" ? false : true;
-    const color = isBuyerMaker ? "var(--danger)" : "var(--neon-green)";
-    const ts = t.executedAt
-      ? new Date(t.executedAt).toLocaleTimeString("en-US", { hour12: false })
-      : "";
+  container.innerHTML = trades.slice(0, 8).map(t => {
+    const cls = t.side === "sell" ? "buy" : "sell";  /* inverted for taker view */
     return `
-      <div style="display:grid;grid-template-columns:1fr 1fr 60px;gap:6px;padding:4px 6px;font-size:0.72rem;font-family:'Courier New',monospace;border-radius:4px;">
-        <span style="color:${color};font-weight:700;">${formatPrice(t.price)}</span>
-        <span style="color:var(--text-dim);text-align:right;">${formatAmount(t.quantity)}</span>
-        <span style="color:var(--text-dim);text-align:right;font-size:0.65rem;">${ts}</span>
-      </div>
-    `;
+      <div class="rt-row ${cls}">
+        <span class="p">${formatPrice(t.price)}</span>
+        <span class="a">${formatAmount(t.quantity)}</span>
+      </div>`;
   }).join("");
 }
 
@@ -731,11 +665,10 @@ function startPriceRefresh() {
 }
 
 /* =========================================================
-   13. BALANCE LOADING + SUBSCRIPTIONS
+   13. BALANCE LOADING
    ========================================================= */
 async function loadBalances() {
   if (!currentUser) return;
-
   const baseAsset  = currentCoin;
   const quoteAsset = "USDT";
 
@@ -748,7 +681,19 @@ async function loadBalances() {
     balanceQuote = { available: 0, locked: 0 };
   }
 
-  updateBalanceLabels();
+  updateBalanceDisplay();
+}
+
+function updateBalanceDisplay() {
+  const buyAvail  = getElement("buyAvail");
+  const buyLocked = getElement("buyLocked");
+  const sellAvail = getElement("sellAvail");
+  const sellLocked= getElement("sellLocked");
+
+  if (buyAvail)  buyAvail.textContent  = "$" + Number(balanceQuote.available).toFixed(2);
+  if (buyLocked) buyLocked.textContent = "$" + Number(balanceQuote.locked).toFixed(2);
+  if (sellAvail) sellAvail.textContent = Number(balanceBase.available).toFixed(8) + " " + currentCoin;
+  if (sellLocked)sellLocked.textContent= Number(balanceBase.locked).toFixed(8);
 }
 
 function subscribeBalances() {
@@ -756,22 +701,22 @@ function subscribeBalances() {
   const baseAsset  = currentCoin;
   const quoteAsset = "USDT";
 
-  onValue(ref(db, `balances/${currentUser.uid}/${baseAsset}`), snap => {
+  const unsubBase = onValue(ref(db, `balances/${currentUser.uid}/${baseAsset}`), snap => {
     balanceBase = snap.exists() ? snap.val() : { available: 0, locked: 0 };
-    updateBalanceLabels();
+    updateBalanceDisplay();
   });
+  activeListeners.push(unsubBase);
 
-  onValue(ref(db, `balances/${currentUser.uid}/${quoteAsset}`), snap => {
+  const unsubQuote = onValue(ref(db, `balances/${currentUser.uid}/${quoteAsset}`), snap => {
     balanceQuote = snap.exists() ? snap.val() : { available: 0, locked: 0 };
-    updateBalanceLabels();
+    updateBalanceDisplay();
   });
+  activeListeners.push(unsubQuote);
 }
 
 /* =========================================================
-   14. TABS + ORDER TYPE + AMOUNT HELPERS
+   14. TABS + ORDER TYPE + AMOUNT
    ========================================================= */
-
-/* Buy/Sell tab switch */
 window.switchTradeTab = (mode) => {
   const tabBuy  = getElement("tabBuy");
   const tabSell = getElement("tabSell");
@@ -792,7 +737,6 @@ window.switchTradeTab = (mode) => {
   }
 };
 
-/* Order type switch (limit / market) */
 window.switchOrderType = (side, type) => {
   orderType[side] = type;
 
@@ -806,11 +750,9 @@ window.switchOrderType = (side, type) => {
   const limitLabel = getElement(side === "buy" ? "buyLimitLabel" : "sellLimitLabel");
   const limitRow   = getElement(side === "buy" ? "buyLimitRow"   : "sellLimitRow");
   const showLimit  = type === "limit";
-
   if (limitLabel) limitLabel.style.display = showLimit ? "" : "none";
   if (limitRow)   limitRow.style.display   = showLimit ? "" : "none";
 
-  /* Prefill limit price with current market price if empty */
   const priceInput = getElement(side === "buy" ? "buyPrice" : "sellPrice");
   if (showLimit && priceInput && !priceInput.value && Number.isFinite(currentPrice)) {
     priceInput.value = currentPrice.toFixed(2);
@@ -819,7 +761,6 @@ window.switchOrderType = (side, type) => {
   updateCalc(side);
 };
 
-/* Quick amount buttons */
 window.quickAmt = (mode, val) => {
   const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!inp) return;
@@ -827,7 +768,6 @@ window.quickAmt = (mode, val) => {
   updateCalc(mode);
 };
 
-/* MAX button */
 window.setMax = (mode) => {
   const inp = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!inp) return;
@@ -844,7 +784,6 @@ window.setMax = (mode) => {
       showToast(`No ${currentCoin} available.`, false);
       return;
     }
-    /* Effective price for sell */
     let effPrice = currentPrice;
     if (orderType.sell === "limit") {
       const priceEl = getElement("sellPrice");
@@ -857,7 +796,6 @@ window.setMax = (mode) => {
   updateCalc(mode);
 };
 
-/* Effective price used for calculations */
 function getEffectivePrice(mode) {
   const type = orderType[mode];
   if (type === "limit") {
@@ -868,7 +806,6 @@ function getEffectivePrice(mode) {
   return Number.isFinite(currentPrice) ? currentPrice : 0;
 }
 
-/* Update preview values inside order form */
 function updateCalc(mode) {
   const amountEl = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!amountEl) return;
@@ -899,7 +836,6 @@ function updateCalc(mode) {
   }
 
   const fee = amount * FEE_RATE;
-
   if (mode === "buy") {
     if (receiveEl) receiveEl.textContent = (amount / price).toFixed(8) + " " + currentCoin;
     if (feeEl) feeEl.textContent = "$" + fee.toFixed(2);
@@ -912,22 +848,20 @@ function updateCalc(mode) {
 }
 
 /* =========================================================
-   15. EXECUTE TRADE — Market + Limit
+   15. EXECUTE TRADE — real engine call
    ========================================================= */
 window.executeTrade = async (mode) => {
   const amountEl = getElement(mode === "buy" ? "buyAmount" : "sellAmount");
   if (!amountEl) return;
 
-  /* Only BTC is internal-trading enabled for now */
   if (!(currentCoin in INTERNAL_TRADING_PAIRS)) {
     showToast(`${currentCoin} internal trading is not enabled yet.`, false);
     return;
   }
 
   const amountUSD = parseFloat(amountEl.value) || 0;
-  const type = orderType[mode];  // "limit" | "market"
+  const type = orderType[mode];
 
-  /* Determine effective price for pre-check */
   let orderPrice;
   if (type === "limit") {
     const priceEl = getElement(mode === "buy" ? "buyPrice" : "sellPrice");
@@ -953,14 +887,13 @@ window.executeTrade = async (mode) => {
     return;
   }
 
-  /* Compute quantity from USD / price */
   const quantity = Number((amountUSD / orderPrice).toFixed(8));
   if (quantity <= 0) {
     showToast("Quantity too small.", false);
     return;
   }
 
-  /* ---------- Client-side pre-check (hint only) ---------- */
+  /* Client-side pre-check (hint only — engine does the real check) */
   if (mode === "buy") {
     const needed = amountUSD * (1 + FEE_RATE);
     if (needed > balanceQuote.available) {
@@ -974,58 +907,49 @@ window.executeTrade = async (mode) => {
     }
   }
 
-  /* ---------- Disable button ---------- */
-  const btn = document.querySelector(mode === "buy" ? ".btn-buy" : ".btn-sell");
+  const btn = getElement(mode === "buy" ? "buyBtn" : "sellBtn");
   const origText = btn ? btn.textContent : "";
   if (btn) {
     btn.disabled = true;
-    btn.textContent = `Placing ${type} ${mode}…`;
+    btn.textContent = `Placing ${type}…`;
   }
 
   try {
+    console.log("[trade.js] Placing order:", { mode, type, orderPrice, quantity });
+
     await engine.ensureWallets(currentUser.uid);
 
     const result = await engine.placeOrder({
       uid: currentUser.uid,
       pair: INTERNAL_TRADING_PAIRS[currentCoin],
       side: mode,
-      type,                     // "limit" | "market"
-      price: orderPrice,        // used by limit, ignored by market
+      type,
+      price: orderPrice,
       quantity
     });
 
-    /* ---------- Report result ---------- */
+    console.log("[trade.js] Order result:", result);
+
     const filled = Number(result.filled || 0);
     const status = result.status;
 
     if (status === "filled") {
-      showToast(
-        `✅ Filled: ${filled.toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
-        true
-      );
+      showToast(`✅ Filled: ${filled.toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`, true);
     } else if (status === "partial") {
-      showToast(
-        `⚡ Partial: ${filled.toFixed(8)} / ${Number(result.quantity).toFixed(8)} ${currentCoin}`,
-        true
-      );
+      showToast(`⚡ Partial: ${filled.toFixed(8)} / ${Number(result.quantity).toFixed(8)} ${currentCoin}`, true);
     } else {
-      showToast(
-        `📋 ${type.toUpperCase()} order placed: ${Number(result.quantity).toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`,
-        true
-      );
+      showToast(`📋 ${type.toUpperCase()} order placed: ${Number(result.quantity).toFixed(8)} ${currentCoin} @ $${formatPrice(result.price)}`, true);
     }
 
-    /* Clear amount only (keep limit price for convenience) */
     amountEl.value = "";
     updateCalc(mode);
 
-    /* Refresh UI */
     await loadBalances();
     await refreshOrderBook();
     await refreshRecentTrades();
 
   } catch (err) {
-    console.error("Order placement failed:", err);
+    console.error("[trade.js] Order failed:", err);
     showToast(err.message || "Order failed. Try again.", false);
   } finally {
     if (btn) {
@@ -1036,7 +960,7 @@ window.executeTrade = async (mode) => {
 };
 
 /* =========================================================
-   16. TIME FRAME SELECTOR
+   16. TIME FRAME
    ========================================================= */
 function bindTimeframeButtons() {
   const toolbar = getElement("chartToolbar");
@@ -1055,10 +979,7 @@ function bindTimeframeButtons() {
   });
 }
 
-/* =========================================================
-   17. RELOAD CHART on coin switch
-   ========================================================= */
-function reloadChartAndBook() {
+function reloadChart() {
   const coin = coins[currentCoin];
   if (!coin) return;
 
@@ -1071,13 +992,12 @@ function reloadChartAndBook() {
 
   loadChartData(coin.marketSymbol, currentTF);
   connectChartWS(coin.marketSymbol, currentTF);
-
   refreshOrderBook();
   refreshRecentTrades();
 }
 
 /* =========================================================
-   18. AUTH STATE
+   17. AUTH STATE
    ========================================================= */
 onAuthStateChanged(auth, async (user) => {
   if (!user) { window.location.href = "login.html"; return; }
@@ -1090,30 +1010,37 @@ onAuthStateChanged(auth, async (user) => {
   if (un) un.textContent = first;
   if (ua) ua.textContent = first.charAt(0).toUpperCase();
 
+  /* Load coin from URL first */
   loadCoinFromURL();
   updateCoinUI();
 
+  /* Start fetching prices */
   startPriceRefresh();
 
-  await engine.ensureWallets(user.uid);
-  await loadBalances();
-  subscribeBalances();
+  /* Ensure wallets + load balances + subscribe */
+  try {
+    await engine.ensureWallets(user.uid);
+    await loadBalances();
+    subscribeBalances();
+  } catch (err) {
+    console.warn("Wallet setup failed:", err);
+  }
 
+  /* Init chart after DOM is ready */
   setTimeout(() => {
     if (initChart()) {
-      reloadChartAndBook();
+      reloadChart();
     }
-
     if (obTimer) clearInterval(obTimer);
     obTimer = setInterval(refreshOrderBook, ORDERBOOK_REFRESH_MS);
 
     if (tradesTimer) clearInterval(tradesTimer);
     tradesTimer = setInterval(refreshRecentTrades, TRADES_REFRESH_MS);
-  }, 200);
+  }, 300);
 });
 
 /* =========================================================
-   19. INIT
+   18. INIT
    ========================================================= */
 document.addEventListener("DOMContentLoaded", () => {
   const buyInp   = getElement("buyAmount");
@@ -1121,18 +1048,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const buyPrice = getElement("buyPrice");
   const sellPrice= getElement("sellPrice");
 
-  if (buyInp)   buyInp.addEventListener("input",   () => updateCalc("buy"));
-  if (sellInp)  sellInp.addEventListener("input",  () => updateCalc("sell"));
-  if (buyPrice) buyPrice.addEventListener("input", () => updateCalc("buy"));
-  if (sellPrice)sellPrice.addEventListener("input",() => updateCalc("sell"));
+  if (buyInp)    buyInp.addEventListener("input",   () => updateCalc("buy"));
+  if (sellInp)   sellInp.addEventListener("input",  () => updateCalc("sell"));
+  if (buyPrice)  buyPrice.addEventListener("input", () => updateCalc("buy"));
+  if (sellPrice) sellPrice.addEventListener("input",() => updateCalc("sell"));
 
-  /* Set initial order type state on forms */
   switchOrderType("buy", "limit");
   switchOrderType("sell", "limit");
 
   bindTimeframeButtons();
 
-  /* Keep trying to fill limit price inputs once prices arrive */
+  /* Auto-fill limit price inputs once prices load */
   const fillInterval = setInterval(() => {
     if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
     const bp = getElement("buyPrice");
@@ -1150,4 +1076,5 @@ window.addEventListener("beforeunload", () => {
   if (obTimer)     clearInterval(obTimer);
   if (tradesTimer) clearInterval(tradesTimer);
   if (binanceWS)   { try { binanceWS.close(); } catch (_) {} }
+  activeListeners.forEach(unsub => { try { unsub(); } catch (_) {} });
 });
