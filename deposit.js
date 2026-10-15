@@ -1,926 +1,730 @@
-// ============================================================
-// 🔥 DEPOSIT PAGE LOGIC - RND STAKING
-// ============================================================
-// Firebase + Real Blockchain Verification
-// Amount tolerance: ±0.5% (handles rounding like 5.012 vs 5.01)
-// ============================================================
+/* =========================================================
+   Nexbit — Deposit Page
+   File: deposit.js
+   Version: 3.0 (Automatic blockchain verification)
 
-import { initializeApp } from "firebase/app";
-import { getAuth, onAuthStateChanged, signOut } from "firebase/auth";
-import { getDatabase, ref, get, onValue } from "firebase/database";
+   Real flow:
+   1. User sends USDT (BEP20) to master wallet
+   2. User enters TXID + amount
+   3. We fetch the transaction from BSC RPC (public)
+   4. We verify: correct contract, correct receiver, amount
+   5. We wait for confirmations
+   6. On success → credit user's balance in Firebase
+   7. Duplicate TXIDs are blocked
 
-// Real verification from external file
-import {
-    completeDeposit as realCompleteDeposit,
-    cleanupStaleLocks as realCleanupStaleLocks,
-    checkPendingVerifications as realCheckPendingVerifications
-} from './verifyTransaction.js';
+   Contract (USDT BEP20): 0x55d398326f99059fF775485246999027B3197955
+   Master wallet:         0xe757c330D267784F190e79e0Ec0dC5d30ad6eFA4
+   ========================================================= */
 
-// Wallet config from external file
-import { WALLET_CONFIG } from './wallet.js';
+import { initializeApp, getApps, getApp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signOut }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getDatabase, ref, get, set, update, onValue, runTransaction }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-// ============================================================
-// 🔥 FIREBASE CONFIG
-// ============================================================
+/* =========================================================
+   1. FIREBASE CONFIG
+   ========================================================= */
 const firebaseConfig = {
-  apiKey: "AIzaSyAz-TLmOhiy-_vHHmIjW8gyIOqTR_PT9o0",
-  authDomain: "rnd2-70080.firebaseapp.com",
-  databaseURL: "https://rnd2-70080-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "rnd2-70080",
-  storageBucket: "rnd2-70080.firebasestorage.app",
-  messagingSenderId: "468625887938",
-  appId: "1:468625887938:web:5cb4ddbcf31b6fc0a4615b",
-  measurementId: "G-ELVJD5NQKB"
+  apiKey: "AIzaSyDKFkbj5WRUinr_v7ARRtD-Gsxz4UlMrl0",
+  authDomain: "exchang-59ea7.firebaseapp.com",
+  databaseURL: "https://exchang-59ea7-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "exchang-59ea7",
+  storageBucket: "exchang-59ea7.firebasestorage.app",
+  messagingSenderId: "422935424250",
+  appId: "1:422935424250:web:b4da15d25714e499cbed43",
+  measurementId: "G-E6NV9Q2SW9"
 };
 
-const app = initializeApp(firebaseConfig);
+const app  = getApps().length ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getDatabase(app);
+const db   = getDatabase(app);
 
-// ============================================================
-// 🔥 DEPOSIT WALLET (NEW ADDRESS)
-// ============================================================
-const DEPOSIT_WALLET_ADDRESS = '0xe757c330D267784F190e79e0Ec0dC5d30ad6eFA4';
+/* =========================================================
+   2. CONFIG — BSC + USDT
+   ========================================================= */
+const DEPOSIT_WALLET = "0xe757c330D267784F190e79e0Ec0dC5d30ad6eFA4";
+const USDT_CONTRACT  = "0x55d398326f99059fF775485246999027B3197955"; // BEP20 USDT
+const MIN_CONFIRMATIONS = 3;
+const POLL_INTERVAL_MS  = 15_000;
+const AMOUNT_TOLERANCE  = 0.005;   // ±0.5%
 
-// ============================================================
-// 🔥 SMART NOTIFICATION SYSTEM
-// ============================================================
-function showToast(message, type = 'success', duration = null) {
-    const container = document.getElementById('toastContainer');
-    if (!container) return;
+/* Multiple BSC RPC endpoints for reliability */
+const BSC_RPCS = [
+  "https://bsc-dataseed.binance.org/",
+  "https://bsc-dataseed1.defibit.io/",
+  "https://bsc-dataseed1.ninicoin.io/",
+  "https://rpc.ankr.com/bsc"
+];
 
-    const toast = document.createElement('div');
-    toast.className = `toast-custom ${type}`;
+/* BSCScan links */
+const BSC_EXPLORER = "https://bscscan.com/";
 
-    const icons = {
-        success: 'bi-check-circle-fill',
-        error: 'bi-x-octagon-fill',
-        warning: 'bi-exclamation-triangle-fill',
-        info: 'bi-info-circle-fill'
-    };
+/* =========================================================
+   3. STATE
+   ========================================================= */
+let currentUser  = null;
+let balanceTimer = null;
 
-    const colors = {
-        success: '#2ecc71',
-        error: '#f87171',
-        warning: '#fbbf24',
-        info: '#60a5fa'
-    };
+/* =========================================================
+   4. HELPERS
+   ========================================================= */
+function getElement(id) { return document.getElementById(id); }
 
-    const showDuration = duration || (type === 'error' ? 8000 : type === 'warning' ? 7000 : 5000);
-
-    toast.innerHTML = `
-        <i class="bi ${icons[type] || icons.info}" style="color:${colors[type] || colors.info};"></i>
-        <span class="toast-msg">${message}</span>
-    `;
-
-    container.appendChild(toast);
-
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(100%)';
-        setTimeout(() => toast.remove(), 300);
-    }, showDuration);
+function escapeHTML(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;",
+    '"': "&quot;", "'": "&#39;"
+  })[c]);
 }
 
-// ============================================================
-// 🔥 ANALYZE ERROR AND SHOW APPROPRIATE NOTIFICATION
-// ============================================================
-function analyzeError(errorMsg, userAmount) {
-    const msg = String(errorMsg || '').toLowerCase();
+function showToast(message, type = "success", duration = 5000) {
+  const container = getElement("toastContainer");
+  if (!container) return;
 
-    // 1. DUPLICATE TRANSACTION
-    if (msg.includes('already been used') || msg.includes('duplicate')) {
-        return {
-            type: 'error',
-            title: '🚫 Duplicate Transaction',
-            message: 'Yeh transaction hash pehle use ho chuka hai. Ek TXID sirf ek baar use ho sakta hai.',
-            statusHTML: `
-                <i class="bi bi-x-octagon-fill me-2"></i>
-                🚫 <strong>Duplicate Transaction</strong>
-                <br><small>Yeh transaction hash pehle already deposit ho chuka hai.</small>
-                <br><small>💡 Ek TXID sirf ek baar use kiya ja sakta hai. Naya deposit karo to naya hash use karo.</small>
-            `
-        };
-    }
+  const icons = {
+    success: "✓", error: "✕", warning: "⚠", info: "ℹ"
+  };
+  const colors = {
+    success: "var(--neon-green)",
+    error: "var(--danger)",
+    warning: "var(--warning)",
+    info: "var(--neon-cyan)"
+  };
 
-    // 2. AMOUNT MISMATCH
-    if (msg.includes('amount mismatch') || msg.includes('shows')) {
-        const match = String(errorMsg).match(/shows\s*([\d.]+)/i)
-                  || String(errorMsg).match(/blockchain\s*shows\s*([\d.]+)/i);
-        const chainAmount = match ? match[1] : null;
+  const toast = document.createElement("div");
+  toast.className = `toast-custom ${type}`;
+  toast.innerHTML = `
+    <span class="ico" style="color:${colors[type] || colors.info};">
+      ${icons[type] || icons.info}
+    </span>
+    <span class="toast-msg">${escapeHTML(message)}</span>
+  `;
+  container.appendChild(toast);
 
-        if (chainAmount) {
-            return {
-                type: 'warning',
-                title: '💰 Amount Mismatch',
-                message: `Aapne ${userAmount} USDT enter kiya, lekin blockchain pe ${chainAmount} USDT hai. Auto-fill button se sahi amount daalein.`,
-                statusHTML: `
-                    <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                    💰 <strong>Amount Mismatch</strong>
-                    <br><small>Aapne enter kiya: <strong>${userAmount} USDT</strong></small>
-                    <br><small>Blockchain pe actual: <strong>${chainAmount} USDT</strong></small>
-                    <br><small>💡 Neeche button click karke sahi amount auto-fill karein, phir Verify dabayein.</small>
-                    <br>
-                    <button type="button" class="btn-refresh mt-2" id="autoFillBtn" style="max-width:340px;padding:8px 16px;font-size:0.8rem;">
-                        <i class="bi bi-magic"></i>
-                        Auto-fill ${chainAmount} USDT
-                    </button>
-                `,
-                chainAmount: chainAmount
-            };
-        }
-        return {
-            type: 'warning',
-            title: '💰 Amount Mismatch',
-            message: 'Aapka amount blockchain se match nahi kar raha. Exact amount with decimals enter karein.',
-            statusHTML: `
-                <i class="bi bi-exclamation-triangle-fill me-2"></i>
-                💰 <strong>Amount Mismatch</strong>
-                <br><small>Aapne ${userAmount} USDT enter kiya but blockchain amount different hai.</small>
-                <br><small>💡 Exact amount with decimals enter karein (e.g. 5.012)</small>
-            `
-        };
-    }
-
-    // 3. WRONG RECEIVER WALLET
-    if (msg.includes('wrong receiver') || msg.includes('wrong wallet')) {
-        return {
-            type: 'error',
-            title: '❌ Wrong Wallet',
-            message: 'Yeh USDT hamare deposit address pe nahi bheja gaya. Sahi address pe bhejein.',
-            statusHTML: `
-                <i class="bi bi-x-octagon-fill me-2"></i>
-                ❌ <strong>Wrong Receiver Wallet</strong>
-                <br><small>Yeh transaction hamare deposit address pe nahi hui hai.</small>
-                <br><small>💡 Ensure karein ki aapne <strong>sahi deposit address</strong> pe USDT (BEP20) bheja hai.</small>
-            `
-        };
-    }
-
-    // 4. INVALID TOKEN / WRONG CONTRACT
-    if (msg.includes('invalid token') || msg.includes('contract')) {
-        return {
-            type: 'error',
-            title: '❌ Wrong Token',
-            message: 'Yeh USDT (BEP20) token nahi hai. Sahi contract se bhejein.',
-            statusHTML: `
-                <i class="bi bi-x-octagon-fill me-2"></i>
-                ❌ <strong>Invalid Token Contract</strong>
-                <br><small>Yeh transaction USDT (BEP20) ka nahi hai.</small>
-                <br><small>💡 Sirf <strong>BSC Mainnet</strong> wala USDT hi deposit hota hai.</small>
-            `
-        };
-    }
-
-    // 5. NO USDT TRANSFER FOUND
-    if (msg.includes('no usdt transfer')) {
-        return {
-            type: 'error',
-            title: '❌ No USDT Transfer',
-            message: 'Is transaction me USDT transfer nahi mila. Sahi TXID use karein.',
-            statusHTML: `
-                <i class="bi bi-x-octagon-fill me-2"></i>
-                ❌ <strong>No USDT Transfer Found</strong>
-                <br><small>Is transaction me koi USDT transfer event nahi hai.</small>
-                <br><small>💡 Sirf <strong>USDT transfer</strong> wala TXID hi valid hai.</small>
-            `
-        };
-    }
-
-    // 6. TRANSACTION FAILED
-    if (msg.includes('failed on blockchain') || msg.includes('transaction failed')) {
-        return {
-            type: 'error',
-            title: '❌ Transaction Failed',
-            message: 'Yeh transaction blockchain pe fail ho gaya. Doosra TXID try karein.',
-            statusHTML: `
-                <i class="bi bi-x-octagon-fill me-2"></i>
-                ❌ <strong>Transaction Failed on Blockchain</strong>
-                <br><small>Yeh transaction BSC pe fail ho chuka hai.</small>
-                <br><small>💡 Failed transaction ka refund nahi hota. Sahi TXID use karein.</small>
-            `
-        };
-    }
-
-    // 7. TRANSACTION NOT FOUND
-    if (msg.includes('not found') || msg.includes('check the hash')) {
-        return {
-            type: 'error',
-            title: '🔍 Transaction Not Found',
-            message: 'Yeh TXID blockchain pe nahi mila. Sahi hash use karein ya thodi der baad try karein.',
-            statusHTML: `
-                <i class="bi bi-x-octagon-fill me-2"></i>
-                ❌ <strong>Transaction Not Found</strong>
-                <br><small>Yeh TXID BSC blockchain pe nahi mila.</small>
-                <br><small>💡 Check karein ki TXID sahi hai, ya 1-2 minute baad try karein.</small>
-            `
-        };
-    }
-
-    // 8. STILL PROCESSING
-    if (msg.includes('already being processed') || msg.includes('already being verified')) {
-        return {
-            type: 'info',
-            title: '⏳ Already Processing',
-            message: 'Yeh transaction already verify ho raha hai. Please wait.',
-            statusHTML: `
-                <i class="bi bi-hourglass-split me-2"></i>
-                ⏳ <strong>Already Processing</strong>
-                <br><small>Yeh transaction abhi verify ho raha hai. Please wait karein.</small>
-            `
-        };
-    }
-
-    // 9. INSUFFICIENT CONFIRMATIONS / PENDING
-    if (msg.includes('waiting for confirmations') || msg.includes('confirmations')) {
-        return {
-            type: 'info',
-            title: '⏳ Waiting for Confirmations',
-            message: 'Transaction mil gaya. Confirmations ka wait kar rahe hain...',
-            statusHTML: `
-                <i class="bi bi-hourglass-split me-2"></i>
-                ⏳ <strong>Waiting for Confirmations</strong>
-                <br><small>${errorMsg}</small>
-            `
-        };
-    }
-
-    // 10. RPC / NETWORK ERROR
-    if (msg.includes('rpc') || msg.includes('network') || msg.includes('timeout')) {
-        return {
-            type: 'error',
-            title: '🌐 Network Error',
-            message: 'Blockchain se connect nahi ho pa rahe. Internet check karein aur try karein.',
-            statusHTML: `
-                <i class="bi bi-wifi-off me-2"></i>
-                ❌ <strong>Network / RPC Error</strong>
-                <br><small>Blockchain node se connect nahi ho pa raha.</small>
-                <br><small>💡 Internet check karein, thodi der baad try karein.</small>
-            `
-        };
-    }
-
-    // 11. GENERIC FALLBACK
-    return {
-        type: 'error',
-        title: '❌ Verification Failed',
-        message: errorMsg || 'Kuch problem aa gayi. Please try again.',
-        statusHTML: `
-            <i class="bi bi-x-octagon-fill me-2"></i>
-            ❌ <strong>Verification Failed</strong>
-            <br><small>${errorMsg || 'Kuch problem aa gayi. Please dobara try karein.'}</small>
-        `
-    };
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateX(120%)";
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
 }
 
-// ============================================================
-// 🔥 CLIPBOARD
-// ============================================================
-function copyToClipboard(text) {
-    if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(text)
-            .then(() => showToast('✅ Address copied to clipboard!', 'success'))
-            .catch(() => fallbackCopy(text));
-    } else {
-        fallbackCopy(text);
-    }
-}
-
-function fallbackCopy(text) {
-    const input = document.createElement('input');
-    input.value = text;
-    input.style.position = 'fixed';
-    input.style.opacity = '0';
-    document.body.appendChild(input);
-    input.select();
-    try {
-        document.execCommand('copy');
-        showToast('✅ Address copied to clipboard!', 'success');
-    } catch (err) {
-        showToast('❌ Failed to copy. Please copy manually.', 'error');
-    }
-    document.body.removeChild(input);
-}
-
-// ============================================================
-// 🔥 SIDEBAR
-// ============================================================
-const sidebarPanel = document.getElementById('sidebarPanel');
-const sidebarOverlay = document.getElementById('sidebarOverlay');
-const sidebarToggle = document.getElementById('sidebarToggle');
-const sidebarClose = document.getElementById('sidebarClose');
-
-function openSidebar() {
-    if (!sidebarPanel || !sidebarOverlay) return;
-    sidebarPanel.classList.add('open');
-    sidebarOverlay.classList.add('active');
-    document.body.style.overflow = 'hidden';
-}
-
-function closeSidebar() {
-    if (!sidebarPanel || !sidebarOverlay) return;
-    sidebarPanel.classList.remove('open');
-    sidebarOverlay.classList.remove('active');
-    document.body.style.overflow = '';
-}
-
-if (sidebarToggle) sidebarToggle.addEventListener('click', openSidebar);
-if (sidebarClose) sidebarClose.addEventListener('click', closeSidebar);
-if (sidebarOverlay) sidebarOverlay.addEventListener('click', closeSidebar);
-
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeSidebar();
+/* =========================================================
+   5. SIDEBAR + LOGOUT
+   ========================================================= */
+window.toggleSidebar = () => {
+  getElement("sidebar")?.classList.toggle("open");
+  getElement("sidebarOverlay")?.classList.toggle("show");
+};
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    getElement("sidebar")?.classList.remove("open");
+    getElement("sidebarOverlay")?.classList.remove("show");
+  }
 });
 
-const logoutBtn = document.getElementById('logoutBtnSidebar');
-if (logoutBtn) {
-    logoutBtn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        try { await signOut(auth); } catch (err) { console.error('Logout error:', err); }
-        window.location.href = 'login.html';
-    });
-}
+window.logoutUser = async (e) => {
+  if (e) e.preventDefault();
+  try {
+    await signOut(auth);
+    localStorage.removeItem("Nexbit_User");
+    window.location.href = "index.html";
+  } catch { showToast("Logout failed", "error"); }
+};
 
-// ============================================================
-// 🔥 UI HELPERS
-// ============================================================
-function updateVerificationStatus(type, message) {
-    const statusDiv = document.getElementById('verificationStatus');
-    if (!statusDiv) return;
-    statusDiv.className = `verification-status show ${type}`;
-    statusDiv.innerHTML = message;
-}
+/* =========================================================
+   6. BSC RPC — JSON-RPC helpers
+   We use raw JSON-RPC calls via fetch so that no external
+   library is required. Everything runs from the browser.
+   ========================================================= */
 
-function updateBalance(newBalance) {
-    const balanceDisplay = document.getElementById('depositBalance');
-    if (balanceDisplay) {
-        balanceDisplay.textContent = '$' + (Number(newBalance) || 0).toFixed(2);
-    }
-}
-
-// ============================================================
-// 🔥 RENDER DEPOSIT UI
-// ============================================================
-function renderDepositUI(depositWallet) {
-    const container = document.getElementById('depositContent');
-    if (!container) return;
-
-    const depositAddress = DEPOSIT_WALLET_ADDRESS;
-    const usdtContract = WALLET_CONFIG.USDT_CONTRACT || '';
-    const minConfirmations = WALLET_CONFIG.MIN_CONFIRMATIONS || 3;
-
-    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(depositAddress)}&color=2ecc71&bgcolor=080e1a`;
-
-    container.innerHTML = `
-        <div class="page-header">
-            <div>
-                <h4>
-                    <span class="header-icon"><i class="bi bi-arrow-down-circle"></i></span>
-                    Deposit USDT
-                </h4>
-                <p>Send USDT (BEP20) to your deposit address & verify on blockchain</p>
-            </div>
-        </div>
-
-        <div class="row g-4">
-            <div class="col-12 col-lg-6">
-                <div class="card-glass">
-                    <div class="card-title">
-                        <i class="bi bi-wallet2"></i>
-                        Deposit Wallet Balance
-                    </div>
-                    <div class="deposit-balance" id="depositBalance">$${(Number(depositWallet) || 0).toFixed(2)}</div>
-                    <div class="deposit-balance-label">USDT Balance</div>
-                    <div class="balance-badge">
-                        <i class="bi bi-shield-check"></i>
-                        Blockchain Verified
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-12 col-lg-6">
-                <div class="card-glass">
-                    <div class="card-title">
-                        <i class="bi bi-qr-code"></i>
-                        Send USDT (BEP20)
-                    </div>
-
-                    <div class="qr-wrapper">
-                        <img src="${qrUrl}" alt="Deposit QR Code" id="qrCodeImg">
-                    </div>
-
-                    <div class="wallet-address-box">
-                        <span class="address" id="depositAddress">${depositAddress}</span>
-                        <button class="copy-btn" id="copyAddressBtn" type="button">
-                            <i class="bi bi-copy"></i> Copy
-                        </button>
-                    </div>
-
-                    <div class="address-note">
-                        <i class="bi bi-info-circle"></i>
-                        Only send <strong>USDT (BEP20)</strong> to this address.
-                        <br>
-                        Contract: <span class="contract">${usdtContract}</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-12">
-                <div class="card-glass">
-                    <div class="card-title">
-                        <i class="bi bi-shield-check"></i>
-                        🔒 Verify Deposit (Blockchain)
-                    </div>
-
-                    <div class="info-alert">
-                        <i class="bi bi-info-circle"></i>
-                        <strong>Real Blockchain Verification:</strong> Transaction is verified directly on BSC blockchain.
-                        <br>
-                        Minimum confirmations required: <strong>${minConfirmations}</strong>
-                        <br>
-                        ❌ <strong>Cannot fake or bypass verification!</strong>
-                    </div>
-
-                    <form id="depositForm">
-                        <div class="row g-3">
-                            <div class="col-12 col-md-4">
-                                <label class="form-label" for="depositAmount">
-                                    Amount You Sent (USDT) <span class="required">*</span>
-                                </label>
-                                <input type="number" id="depositAmount" class="form-control form-control-custom"
-                                       placeholder="e.g. 5.012" min="0.01" step="any" required>
-                                <span class="form-hint">Exact amount you sent (decimals OK)</span>
-                            </div>
-                            <div class="col-12 col-md-5">
-                                <label class="form-label" for="txHash">
-                                    Transaction Hash (TXID) <span class="required">*</span>
-                                </label>
-                                <input type="text" id="txHash" class="form-control form-control-custom"
-                                       placeholder="0x..." required>
-                                <span class="form-hint">Real BSC transaction hash from your wallet</span>
-                            </div>
-                            <div class="col-12 col-md-3 d-flex align-items-start">
-                                <button type="submit" class="btn-primary-custom" id="verifyBtn" style="margin-top: 26px;">
-                                    <i class="bi bi-check-circle"></i>
-                                    <span>Verify</span>
-                                </button>
-                            </div>
-                        </div>
-                    </form>
-
-                    <div id="verificationStatus" class="verification-status"></div>
-                    <div id="pendingVerifications" class="mt-3"></div>
-                </div>
-            </div>
-
-            <div class="col-12">
-                <div class="card-glass">
-                    <div class="card-title">
-                        <i class="bi bi-clock-history"></i>
-                        Recent Deposits
-                    </div>
-                    <div id="recentDeposits">
-                        <div class="empty-state">
-                            <i class="bi bi-inbox"></i>
-                            <p>Loading deposits...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    const copyBtn = document.getElementById('copyAddressBtn');
-    if (copyBtn) {
-        copyBtn.addEventListener('click', function () {
-            copyToClipboard(depositAddress);
-            this.classList.add('copied');
-            this.innerHTML = '<i class="bi bi-check"></i> Copied!';
-            setTimeout(() => {
-                this.classList.remove('copied');
-                this.innerHTML = '<i class="bi bi-copy"></i> Copy';
-            }, 2000);
-        });
-    }
-}
-
-// ============================================================
-// 🔥 RESUME PENDING VERIFICATIONS (FIXED)
-// ============================================================
-async function resumePendingVerifications(userId) {
+/* Call `eth_getTransactionReceipt` for the TX hash */
+async function rpcGetReceipt(txHash) {
+  for (const rpc of BSC_RPCS) {
     try {
-        const pendingTxs = await realCheckPendingVerifications(userId);
-        const container = document.getElementById('pendingVerifications');
-
-        if (!container || !pendingTxs || pendingTxs.length === 0) {
-            if (container) container.innerHTML = '';
-            return;
-        }
-
-        const minConfirmations = WALLET_CONFIG.MIN_CONFIRMATIONS || 3;
-        const pollingInterval = (WALLET_CONFIG.POLLING_INTERVAL || 15000) / 1000;
-
-        let html = `
-            <div class="verification-status show polling">
-                <i class="bi bi-arrow-repeat me-2"></i>
-                <strong>⏳ Resuming pending verifications...</strong>
-                <div class="mt-2">
-        `;
-
-        for (const pending of pendingTxs) {
-            html += `
-                <div class="d-flex align-items-center gap-2 mb-1">
-                    <span class="polling-indicator"></span>
-                    <span style="font-family:monospace;font-size:0.8rem;">${(pending.txHash || '').substring(0, 20)}...</span>
-                    <span class="badge-mini badge-confirm">Pending</span>
-                </div>
-            `;
-        }
-
-        html += `</div></div>`;
-        container.innerHTML = html;
-
-        for (const pending of pendingTxs) {
-            try {
-                await realCompleteDeposit(
-                    userId,
-                    pending.txHash,
-                    (pending.lockData && pending.lockData.amount) || 0,
-                    (confirmations, currentBlock, blockNumber) => {
-                        updateVerificationStatus(
-                            'polling',
-                            `<span class="polling-indicator"></span>
-                             ⏳ Waiting for confirmations... (${confirmations}/${minConfirmations})<br>
-                             <small>Block: ${blockNumber || 'pending'} | Auto-checking every ${pollingInterval} seconds...</small>`
-                        );
-                    },
-                    (newBalance, creditedAmount, blockNumber) => {
-                        const finalAmount = (creditedAmount !== undefined && creditedAmount !== null)
-                            ? Number(creditedAmount) : Number(pending.lockData && pending.lockData.amount) || 0;
-                        const finalBlock = blockNumber || 'confirmed';
-
-                        updateVerificationStatus(
-                            'success',
-                            `<i class="bi bi-check-circle-fill me-2"></i>
-                             ✅ <strong>Deposit Successfully Credited!</strong>
-                             <br><small>Credited Amount: <strong>$${finalAmount.toFixed(6)} USDT</strong></small>
-                             <br><small>New Balance: <strong>$${Number(newBalance).toFixed(2)} USDT</strong></small>
-                             <br><small>🔒 Verified on BSC Block: <strong>${finalBlock}</strong></small>`
-                        );
-                        showToast(`✅ Pending deposit of $${finalAmount.toFixed(4)} USDT completed!`, 'success', 6000);
-                        updateBalance(newBalance);
-                    },
-                    (error) => {
-                        const analysis = analyzeError(error, (pending.lockData && pending.lockData.amount) || 0);
-                        updateVerificationStatus(analysis.type === 'warning' ? 'error' : analysis.type, analysis.statusHTML);
-                        showToast(analysis.message, analysis.type === 'warning' ? 'warning' : 'error', 8000);
-                    }
-                );
-            } catch (error) {
-                console.error('Error resuming pending verification:', error);
-            }
-        }
+      const resp = await fetch(rpc, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1,
+          method: "eth_getTransactionReceipt",
+          params: [txHash]
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      if (data && data.result) return data.result;
+      if (data && data.error) throw new Error(data.error.message || "RPC error");
     } catch (err) {
-        console.error('Error in resumePendingVerifications:', err);
+      console.warn(`RPC ${rpc} failed:`, err.message);
     }
+  }
+  throw new Error("All RPC endpoints failed for receipt");
 }
 
-// ============================================================
-// 🔥 LOAD RECENT DEPOSITS (REAL-TIME)
-// ============================================================
+/* Call `eth_blockNumber` */
+async function rpcBlockNumber() {
+  for (const rpc of BSC_RPCS) {
+    try {
+      const resp = await fetch(rpc, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0", id: 1,
+          method: "eth_blockNumber",
+          params: []
+        }),
+        signal: AbortSignal.timeout(8000)
+      });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      if (data && data.result) return parseInt(data.result, 16);
+    } catch (err) { /* try next */ }
+  }
+  throw new Error("Could not fetch current block number");
+}
+
+/* Standard ERC20/BEP20 Transfer event signature:
+   keccak256("Transfer(address,address,uint256)") */
+const TRANSFER_TOPIC =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+/* Convert hex → decimal string (safe for big numbers) */
+function hexToDecimal(hex) {
+  if (!hex) return "0";
+  return BigInt(hex).toString();
+}
+
+/* =========================================================
+   7. VERIFY A DEPOSIT (core logic)
+   ========================================================= */
+async function verifyDepositOnChain(txHash, expectedAmount, userId) {
+  /* ---------- 1. Get receipt ---------- */
+  const receipt = await rpcGetReceipt(txHash);
+  if (!receipt) throw new Error("Transaction not found on BSC");
+  if (receipt.status !== "0x1") throw new Error("Transaction failed on blockchain");
+
+  const txBlock = parseInt(receipt.blockNumber, 16);
+
+  /* ---------- 2. Find USDT Transfer event to our wallet ---------- */
+  const depositAddr = DEPOSIT_WALLET.toLowerCase().replace(/^0x/, "");
+  const padded = "0x" + depositAddr.padStart(64, "0");
+
+  let match = null;
+  for (const log of (receipt.logs || [])) {
+    if (log.address?.toLowerCase() !== USDT_CONTRACT.toLowerCase()) continue;
+    if (!log.topics || log.topics[0] !== TRANSFER_TOPIC) continue;
+    if (log.topics[2]?.toLowerCase() !== padded.toLowerCase()) continue;
+
+    match = log;
+    break;
+  }
+
+  if (!match) {
+    throw new Error("No USDT transfer to deposit wallet in this transaction");
+  }
+
+  /* ---------- 3. Decode amount (BEP20 USDT has 18 decimals) ---------- */
+  const rawAmount = BigInt(match.data);
+  const decimals = 18n;
+  const divisor = 10n ** decimals;
+
+  /* Keep precision as string, then to number with 6 decimals */
+  const whole = rawAmount / divisor;
+  const fraction = rawAmount % divisor;
+  const fractionStr = fraction.toString().padStart(18, "0").slice(0, 6);
+  const amountStr = `${whole}.${fractionStr}`;
+  const amountNum = parseFloat(amountStr);
+
+  /* ---------- 4. Compare with expected ---------- */
+  const diff = Math.abs(amountNum - expectedAmount);
+  const tolerance = Math.max(expectedAmount * AMOUNT_TOLERANCE, 0.01);
+
+  if (diff > tolerance) {
+    const err = new Error(`Amount mismatch: blockchain shows ${amountStr}`);
+    err.chainAmount = amountNum;
+    err.chainAmountStr = amountStr;
+    throw err;
+  }
+
+  return {
+    amount: amountNum,
+    amountStr,
+    blockNumber: txBlock,
+    receiver: depositAddr
+  };
+}
+
+/* =========================================================
+   8. WAIT FOR CONFIRMATIONS
+   ========================================================= */
+async function waitForConfirmations(txHash, onProgress) {
+  while (true) {
+    const receipt = await rpcGetReceipt(txHash);
+    if (!receipt) throw new Error("Transaction disappeared from BSC");
+    if (receipt.status !== "0x1") throw new Error("Transaction failed");
+
+    const txBlock = parseInt(receipt.blockNumber, 16);
+    const currentBlock = await rpcBlockNumber();
+    const confirmations = Math.max(0, currentBlock - txBlock);
+
+    if (onProgress) onProgress(confirmations, txBlock, currentBlock);
+
+    if (confirmations >= MIN_CONFIRMATIONS) {
+      return { confirmations, blockNumber: txBlock };
+    }
+
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+  }
+}
+
+/* =========================================================
+   9. CREDIT USER BALANCE (atomic & duplicate-safe)
+   ========================================================= */
+async function creditBalance(userId, txHash, amount, blockNumber) {
+  /* Check if this TXID has already been credited */
+  const usedRef = ref(db, `usedTxIds/${txHash}`);
+  const usedSnap = await get(usedRef);
+  if (usedSnap.exists()) {
+    throw new Error("This transaction hash has already been used.");
+  }
+
+  /* Mark as used (transaction ensures atomicity) */
+  await set(usedRef, {
+    userId,
+    amount,
+    blockNumber,
+    usedAt: new Date().toISOString()
+  });
+
+  /* Increment user's USD balance */
+  const balanceRef = ref(db, `users/${userId}/balanceUSD`);
+  const result = await runTransaction(balanceRef, current => {
+    const prev = Number(current) || 0;
+    return prev + amount;
+  });
+
+  const newBalance = result.snapshot.val() || 0;
+
+  /* Save deposit record */
+  const depositId = `${Date.now()}_${txHash.slice(2, 10)}`;
+  await set(ref(db, `users/${userId}/deposits/${depositId}`), {
+    txHash,
+    amount,
+    blockNumber,
+    confirmations: MIN_CONFIRMATIONS,
+    asset: "USDT",
+    network: "BEP20",
+    status: "confirmed",
+    createdAt: new Date().toISOString()
+  });
+
+  /* Also record in recent transactions */
+  await set(ref(db, `users/${userId}/transactions/${depositId}`), {
+    type: "deposit",
+    asset: "USDT",
+    amount,
+    txHash,
+    blockNumber,
+    status: "success",
+    timestamp: Date.now()
+  });
+
+  return newBalance;
+}
+
+/* =========================================================
+   10. LOAD RECENT DEPOSITS (real-time)
+   ========================================================= */
 function loadRecentDeposits(userId) {
-    const depositsRef = ref(db, `users/${userId}/transactions`);
+  const wrap = getElement("recentDeposits");
+  if (!wrap) return;
 
-    onValue(depositsRef, (snapshot) => {
-        const container = document.getElementById('recentDeposits');
-        if (!container) return;
-
-        if (!snapshot.exists()) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <i class="bi bi-inbox"></i>
-                    <p>No deposits yet. Send USDT to your deposit address.</p>
-                </div>
-            `;
-            return;
-        }
-
-        const transactions = snapshot.val();
-        const deposits = Object.values(transactions)
-            .filter(tx => tx && tx.type === 'deposit' && tx.status === 'success')
-            .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
-            .slice(0, 10);
-
-        if (deposits.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <i class="bi bi-inbox"></i>
-                    <p>No deposits yet. Send USDT to your deposit address.</p>
-                </div>
-            `;
-            return;
-        }
-
-        container.innerHTML = deposits.map(tx => {
-            const amount = Number(tx.amount || 0).toFixed(4);
-            const dateStr = tx.timestamp ? new Date(tx.timestamp).toLocaleString('en-IN') : 'N/A';
-            const shortHash = tx.txHash ? tx.txHash.substring(0, 16) + '...' : '';
-
-            return `
-                <div class="deposit-item">
-                    <div>
-                        <div class="amount">$${amount} USDT</div>
-                        <div class="date">${dateStr}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <span class="status-active">
-                            <i class="bi bi-check-circle-fill"></i>
-                            Verified (Blockchain)
-                        </span>
-                        <div class="badges">
-                            ${tx.blockNumber ? `<span class="badge-mini badge-block">Block: ${tx.blockNumber}</span>` : ''}
-                            ${tx.confirmations ? `<span class="badge-mini badge-confirm">${tx.confirmations} Confirmations</span>` : ''}
-                            ${shortHash ? `<span class="badge-mini badge-hash">${shortHash}</span>` : ''}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-    }, (error) => {
-        console.error('Error loading deposits:', error);
-        const container = document.getElementById('recentDeposits');
-        if (container) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <i class="bi bi-exclamation-triangle" style="color:var(--red);opacity:0.6;"></i>
-                    <p style="color:var(--red);">Error loading deposits. Please refresh.</p>
-                </div>
-            `;
-        }
-    });
-}
-
-// ============================================================
-// 🔥 BALANCE REAL-TIME LISTENER
-// ============================================================
-function listenToBalance(userId) {
-    const balanceRef = ref(db, `users/${userId}/depositWallet`);
-    onValue(balanceRef, (snapshot) => {
-        if (snapshot.exists()) {
-            updateBalance(snapshot.val());
-        }
-    });
-}
-
-// ============================================================
-// 🔥 AUTO-FILL BUTTON HANDLER
-// ============================================================
-document.addEventListener('click', function (e) {
-    const btn = e.target.closest('#autoFillBtn');
-    if (!btn) return;
-
-    const match = btn.textContent.match(/([\d.]+)/);
-    if (!match) return;
-
-    const amountInput = document.getElementById('depositAmount');
-    if (amountInput) {
-        amountInput.value = match[1];
-        showToast(`✅ Auto-filled ${match[1]} USDT. Ab "Verify" button dabayein.`, 'success');
-        btn.remove();
+  const depositsRef = ref(db, `users/${userId}/deposits`);
+  onValue(depositsRef, snap => {
+    if (!snap.exists()) {
+      wrap.innerHTML = `
+        <div class="empty-state">
+          <span class="emoji">📥</span>
+          <p>No deposits yet.</p>
+        </div>`;
+      return;
     }
-});
 
-// ============================================================
-// 🔥 HANDLE DEPOSIT FORM SUBMIT (FIXED)
-// ============================================================
-function attachFormHandler(user) {
-    const form = document.getElementById('depositForm');
-    if (!form) return;
+    const list = Object.entries(snap.val())
+      .map(([id, d]) => ({ id, ...d }))
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      .slice(0, 10);
 
-    form.addEventListener('submit', async function (e) {
-        e.preventDefault();
+    wrap.innerHTML = list.map(d => {
+      const amount = Number(d.amount || 0).toFixed(4);
+      const dateStr = d.createdAt
+        ? new Date(d.createdAt).toLocaleString("en-IN")
+        : "—";
+      const shortHash = d.txHash ? d.txHash.slice(0, 16) + "…" : "";
 
-        const amountInput = document.getElementById('depositAmount');
-        const txHashInput = document.getElementById('txHash');
-        const verifyBtn = document.getElementById('verifyBtn');
-
-        const amount = parseFloat(amountInput.value);
-        const txHash = txHashInput.value.trim();
-
-        const minConfirmations = WALLET_CONFIG.MIN_CONFIRMATIONS || 3;
-        const pollingInterval = (WALLET_CONFIG.POLLING_INTERVAL || 15000) / 1000;
-
-        // ---- FRONTEND VALIDATION ----
-        if (!amount || amount <= 0) {
-            showToast('❌ Sahi amount enter karein (0 se zyada).', 'error');
-            return;
-        }
-
-        if (!txHash || txHash.length < 10) {
-            showToast('❌ Sahi transaction hash enter karein.', 'error');
-            return;
-        }
-
-        if (!txHash.startsWith('0x')) {
-            showToast('❌ Transaction hash "0x" se start hona chahiye.', 'error');
-            return;
-        }
-
-        if (verifyBtn.disabled) {
-            showToast('⏳ Please wait, verification already chal rahi hai...', 'info');
-            return;
-        }
-
-        // ---- START VERIFICATION ----
-        updateVerificationStatus(
-            'pending',
-            `<i class="bi bi-hourglass-split me-2"></i>
-             🔒 <strong>Verifying on BSC blockchain...</strong>
-             <span class="spinner-border spinner-border-sm ms-2" role="status"></span>
-             <br><small>Please wait, yeh thoda time le sakta hai...</small>`
-        );
-
-        verifyBtn.disabled = true;
-        const originalBtnHTML = verifyBtn.innerHTML;
-        verifyBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Verifying...';
-
-        let successFired = false;
-
-        try {
-            const result = await realCompleteDeposit(
-                user.uid,
-                txHash,
-                amount,
-
-                // ================================================
-                // 🔥 ON PENDING
-                // ================================================
-                (confirmations, currentBlock, blockNumber) => {
-                    updateVerificationStatus(
-                        'polling',
-                        `<span class="polling-indicator"></span>
-                         ⏳ <strong>Waiting for confirmations...</strong> (${confirmations}/${minConfirmations})
-                         <br><small>Block: ${blockNumber || 'pending'} | Auto-checking every ${pollingInterval} seconds</small>
-                         <br><small>⚠️ Transaction ko ${minConfirmations} confirmations chahiye</small>`
-                    );
-                    showToast(
-                        `⏳ Confirmations ka wait... (${confirmations}/${minConfirmations})`,
-                        'info',
-                        3500
-                    );
-                },
-
-                // ================================================
-                // 🔥 ON SUCCESS
-                // ================================================
-                (newBalance, creditedAmount, blockNumber) => {
-                    successFired = true;
-
-                    const finalAmount = (creditedAmount !== undefined && creditedAmount !== null)
-                        ? Number(creditedAmount)
-                        : Number(amount);
-                    const finalBlock = blockNumber || 'confirmed';
-
-                    updateVerificationStatus(
-                        'success',
-                        `<i class="bi bi-check-circle-fill me-2"></i>
-                         ✅ <strong>Deposit Successfully Credited!</strong>
-                         <br><small>Credited Amount: <strong>$${finalAmount.toFixed(6)} USDT</strong></small>
-                         <br><small>New Balance: <strong>$${Number(newBalance).toFixed(2)} USDT</strong></small>
-                         <br><small>🔒 Verified on BSC Block: <strong>${finalBlock}</strong></small>`
-                    );
-
-                    showToast(
-                        `✅ Deposit success! $${finalAmount.toFixed(4)} USDT aapke wallet me add ho gaya.`,
-                        'success',
-                        6000
-                    );
-
-                    updateBalance(newBalance);
-
-                    amountInput.value = '';
-                    txHashInput.value = '';
-                },
-
-                // ================================================
-                // 🔥 ON ERROR
-                // ================================================
-                (error) => {
-                    if (successFired) {
-                        console.warn('Ignoring error because success already fired:', error);
-                        return;
-                    }
-
-                    const analysis = analyzeError(error, amount);
-                    updateVerificationStatus(
-                        analysis.type === 'warning' ? 'error' : analysis.type,
-                        analysis.statusHTML
-                    );
-                    showToast(analysis.message, analysis.type, 8000);
-                }
-            );
-
-            // 🔥 IMPORTANT: Check result AFTER all callbacks fire
-            // If result has amountMismatch and callback didn't fire
-            if (result && result.amountMismatch && !successFired) {
-                const analysis = analyzeError(result.error, amount);
-                updateVerificationStatus(
-                    analysis.type === 'warning' ? 'error' : analysis.type,
-                    analysis.statusHTML
-                );
-                showToast(analysis.message, analysis.type, 8000);
-            }
-            // If result has error and callback didn't fire
-            else if (result && result.error && !successFired) {
-                const analysis = analyzeError(result.error, amount);
-                updateVerificationStatus(
-                    analysis.type === 'warning' ? 'error' : analysis.type,
-                    analysis.statusHTML
-                );
-                showToast(analysis.message, analysis.type, 8000);
-            }
-
-        } catch (error) {
-            console.error('Deposit error:', error);
-
-            if (successFired) {
-                console.warn('Ignoring catch error because success already fired:', error);
-            } else {
-                const analysis = analyzeError(error.message || 'Unexpected error', amount);
-                updateVerificationStatus(
-                    analysis.type === 'warning' ? 'error' : analysis.type,
-                    analysis.statusHTML
-                );
-                showToast(analysis.message, analysis.type, 8000);
-            }
-        }
-
-        verifyBtn.disabled = false;
-        verifyBtn.innerHTML = originalBtnHTML;
-    });
+      return `
+        <div class="deposit-item">
+          <div>
+            <div class="amt">$${escapeHTML(amount)} USDT</div>
+            <div class="date">${escapeHTML(dateStr)}</div>
+          </div>
+          <div style="text-align:right;">
+            <span class="status">
+              ✓ Verified (Blockchain)
+            </span>
+            <div class="badges">
+              ${d.blockNumber ? `<span class="badge-mini badge-block">Block: ${escapeHTML(String(d.blockNumber))}</span>` : ""}
+              ${shortHash ? `<span class="badge-mini badge-hash">${escapeHTML(shortHash)}</span>` : ""}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }, err => {
+    console.error("Recent deposits error:", err);
+    wrap.innerHTML = `<div class="empty-state"><p style="color:var(--danger);">Unable to load deposits.</p></div>`;
+  });
 }
 
-// ============================================================
-// 🔥 MAIN AUTH FLOW
-// ============================================================
-onAuthStateChanged(auth, async (user) => {
-    if (!user) {
-        window.location.href = 'login.html';
-        return;
+/* =========================================================
+   11. RENDER THE PAGE
+   ========================================================= */
+function renderDepositUI(currentBalance = 0) {
+  const container = getElement("depositContent");
+  if (!container) return;
+
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(DEPOSIT_WALLET)}&color=00f0ff&bgcolor=050814`;
+
+  container.innerHTML = `
+    <div class="page-head">
+      <h1>Deposit <span>USDT</span></h1>
+      <p>Send USDT (BEP20) to your deposit address, then verify on blockchain.</p>
+    </div>
+
+    <!-- Balance Card -->
+    <div class="balance-card">
+      <div class="balance-label">Your USDT Balance</div>
+      <div class="balance-amount" id="depositBalance">$${(Number(currentBalance) || 0).toFixed(2)}</div>
+      <div class="balance-badge">
+        <span>🛡</span> Blockchain Verified
+      </div>
+    </div>
+
+    <!-- Deposit Card -->
+    <div class="deposit-card">
+      <div class="card-title"><span class="ico">📥</span> Send USDT (BEP20)</div>
+
+      <div class="qr-address-grid">
+        <div class="qr-box">
+          <img src="${qrUrl}" alt="QR Code" />
+        </div>
+
+        <div class="address-block">
+          <div class="address-label">Your Deposit Address</div>
+          <div class="address-value" id="depositAddress">${escapeHTML(DEPOSIT_WALLET)}</div>
+
+          <div class="address-actions">
+            <button class="btn btn-primary" id="copyAddressBtn">📋 Copy Address</button>
+            <button class="btn btn-ghost" id="shareAddressBtn">🔗 Share</button>
+          </div>
+
+          <div class="address-note">
+            <strong>Only send USDT (BEP20) to this address.</strong>
+            <br>
+            Contract: <span class="contract">${escapeHTML(USDT_CONTRACT)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Verify Card -->
+    <div class="deposit-card">
+      <div class="card-title"><span class="ico">🔒</span> Verify Deposit on Blockchain</div>
+
+      <div class="info-alert">
+        <strong>Real Blockchain Verification:</strong> Your transaction is verified directly on the
+        BSC blockchain.
+        <br>
+        Minimum confirmations required: <strong>${MIN_CONFIRMATIONS}</strong>
+        <br>
+        <span class="x">✕ Cannot be faked or bypassed.</span>
+      </div>
+
+      <form id="depositForm" class="verify-form">
+        <div class="verify-grid">
+          <div class="form-group">
+            <label class="form-label" for="depositAmount">
+              Amount Sent (USDT) <span class="req">*</span>
+            </label>
+            <input type="number" id="depositAmount" class="form-control"
+                   placeholder="e.g. 5.012" min="0.01" step="any" required>
+            <span class="form-hint">Exact amount you sent</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="txHash">
+              Transaction Hash (TXID) <span class="req">*</span>
+            </label>
+            <input type="text" id="txHash" class="form-control"
+                   placeholder="0x…" required>
+            <span class="form-hint">Real BSC transaction hash</span>
+          </div>
+
+          <div class="verify-btn-wrap">
+            <button type="submit" class="btn btn-primary" id="verifyBtn">
+              Verify Deposit
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <div id="verificationStatus" class="verification-status"></div>
+    </div>
+
+    <!-- Recent Deposits -->
+    <div class="deposit-card">
+      <div class="card-title"><span class="ico">📜</span> Recent Deposits</div>
+      <div id="recentDeposits">
+        <div class="loading-box">
+          <div class="spinner"></div>
+          <div>Loading deposits…</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  /* Bind buttons */
+  getElement("copyAddressBtn")?.addEventListener("click", () => {
+    copyToClipboard(DEPOSIT_WALLET);
+  });
+
+  getElement("shareAddressBtn")?.addEventListener("click", async () => {
+    const text = `Deposit USDT (BEP20) to:\n${DEPOSIT_WALLET}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: "Nexbit Deposit", text }); } catch (_) {}
+    } else {
+      copyToClipboard(text);
     }
+  });
+
+  /* Wire the form (only once, on this render) */
+  attachFormHandler();
+}
+
+/* =========================================================
+   12. COPY HELPER
+   ========================================================= */
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast("Address copied to clipboard", "success", 2500);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand("copy");
+      showToast("Address copied", "success", 2500);
+    } catch {
+      showToast("Copy failed — please copy manually", "error");
+    }
+    ta.remove();
+  }
+}
+
+/* =========================================================
+   13. VERIFICATION STATUS UI
+   ========================================================= */
+function updateVerificationStatus(type, html) {
+  const el = getElement("verificationStatus");
+  if (!el) return;
+  el.className = `verification-status show ${type}`;
+  el.innerHTML = html;
+}
+
+function updateBalanceUI(newBalance) {
+  const el = getElement("depositBalance");
+  if (el) el.textContent = "$" + (Number(newBalance) || 0).toFixed(2);
+}
+
+/* =========================================================
+   14. FORM HANDLER
+   ========================================================= */
+function attachFormHandler() {
+  const form = getElement("depositForm");
+  if (!form || form.dataset.bound === "1") return;
+  form.dataset.bound = "1";
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    if (!currentUser) {
+      showToast("Please log in first.", "error");
+      return;
+    }
+
+    const amountInput = getElement("depositAmount");
+    const txHashInput = getElement("txHash");
+    const verifyBtn   = getElement("verifyBtn");
+
+    const amount = parseFloat(amountInput.value);
+    const txHash = (txHashInput.value || "").trim();
+
+    /* --- Basic validation --- */
+    if (!amount || amount <= 0) {
+      showToast("Enter a valid amount (greater than 0).", "error"); return;
+    }
+    if (!txHash || txHash.length < 20) {
+      showToast("Enter a valid transaction hash.", "error"); return;
+    }
+    if (!txHash.startsWith("0x")) {
+      showToast('Transaction hash must start with "0x".', "error"); return;
+    }
+    if (verifyBtn.disabled) {
+      showToast("Please wait, verification already running…", "info"); return;
+    }
+
+    verifyBtn.disabled = true;
+    const originalHTML = verifyBtn.innerHTML;
+    verifyBtn.innerHTML = "Verifying…";
+
+    updateVerificationStatus(
+      "pending",
+      `<span class="polling-indicator"></span>
+       <strong>Verifying on BSC blockchain…</strong>
+       <br><small>Please wait, this may take a moment.</small>`
+    );
 
     try {
-        try {
-            await realCleanupStaleLocks();
-        } catch (err) {
-            console.warn('cleanupStaleLocks warning:', err);
-        }
+      /* --- Step 1: Verify on-chain (amount, contract, receiver) --- */
+      const chainResult = await verifyDepositOnChain(txHash, amount, currentUser.uid);
 
-        const userSnap = await get(ref(db, 'users/' + user.uid));
-        if (!userSnap.exists()) {
-            window.location.href = 'dashboard.html';
-            return;
-        }
+      /* --- Step 2: Wait for confirmations --- */
+      const final = await waitForConfirmations(txHash, (confirmations) => {
+        updateVerificationStatus(
+          "polling",
+          `<span class="polling-indicator"></span>
+           <strong>Waiting for confirmations…</strong> (${confirmations}/${MIN_CONFIRMATIONS})
+           <br><small>Confirmed block: ${chainResult.blockNumber}</small>`
+        );
+      });
 
-        const userData = userSnap.val();
+      /* --- Step 3: Credit balance --- */
+      const newBalance = await creditBalance(
+        currentUser.uid,
+        txHash,
+        chainResult.amount,
+        final.blockNumber
+      );
 
-        const name = userData.name || 'User';
-        const username = userData.username || userData.referralCode || 'USER';
-        const sidebarName = document.getElementById('sidebarName');
-        const sidebarUserId = document.getElementById('sidebarUserId');
-        const sidebarAvatar = document.getElementById('sidebarAvatar');
-        const referralBadge = document.getElementById('referralBadge');
+      updateVerificationStatus(
+        "success",
+        `<strong>✓ Deposit Successfully Credited!</strong>
+         <br>Amount: <strong>$${chainResult.amount.toFixed(6)} USDT</strong>
+         <br>New Balance: <strong>$${Number(newBalance).toFixed(2)} USDT</strong>
+         <br>Verified on BSC Block: <strong>${final.blockNumber}</strong>`
+      );
+      showToast(`✅ Deposit of $${chainResult.amount.toFixed(4)} USDT credited!`, "success", 6000);
+      updateBalanceUI(newBalance);
+      amountInput.value = "";
+      txHashInput.value = "";
 
-        if (sidebarName) sidebarName.textContent = name;
-        if (sidebarUserId) sidebarUserId.textContent = 'ID: ' + username.substring(0, 20) + (username.length > 20 ? '...' : '');
-        if (sidebarAvatar) sidebarAvatar.textContent = name.charAt(0).toUpperCase();
-        if (referralBadge) referralBadge.textContent = userData.totalReferrals || 0;
+    } catch (err) {
+      console.error("Deposit error:", err);
 
-        const depositWallet = userData.depositWallet || 0;
+      if (err.chainAmount !== undefined) {
+        /* Amount mismatch — give a helpful hint */
+        updateVerificationStatus(
+          "error",
+          `<strong>💰 Amount Mismatch</strong>
+           <br>You entered: <strong>${amount} USDT</strong>
+           <br>Blockchain shows: <strong>${err.chainAmountStr} USDT</strong>
+           <br><br>
+           <button type="button" class="auto-fill-btn" id="autoFillBtn">
+             Auto-fill ${err.chainAmountStr} USDT
+           </button>`
+        );
+        showToast(`Amount mismatch. Blockchain shows ${err.chainAmountStr} USDT.`, "warning", 8000);
+      } else {
+        /* Generic error */
+        updateVerificationStatus(
+          "error",
+          `<strong>✕ Verification Failed</strong>
+           <br><small>${escapeHTML(err.message || "Unknown error")}</small>`
+        );
+        showToast(err.message || "Verification failed.", "error", 8000);
+      }
 
-        renderDepositUI(depositWallet);
-        await resumePendingVerifications(user.uid);
-        loadRecentDeposits(user.uid);
-        listenToBalance(user.uid);
-        attachFormHandler(user);
-
-    } catch (error) {
-        console.error('Error loading deposit page:', error);
-        const container = document.getElementById('depositContent');
-        if (container) {
-            container.innerHTML = `
-                <div class="empty-state" style="padding: 60px 20px;">
-                    <i class="bi bi-exclamation-triangle" style="color:var(--red);opacity:0.8;"></i>
-                    <h4 style="color:#fff;margin-bottom:8px;">Error Loading Page</h4>
-                    <p style="color:var(--text-muted);margin-bottom:20px;">
-                        ${error.message || 'Please check your internet connection.'}
-                    </p>
-                    <button class="btn-refresh" onclick="location.reload()" style="max-width:200px;margin:0 auto;">
-                        <i class="bi bi-arrow-clockwise"></i>
-                        Refresh Page
-                    </button>
-                </div>
-            `;
-        }
+    } finally {
+      verifyBtn.disabled = false;
+      verifyBtn.innerHTML = originalHTML;
     }
+  });
+}
+
+/* Auto-fill button handler */
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("#autoFillBtn");
+  if (!btn) return;
+  const match = btn.textContent.match(/([\d.]+)/);
+  if (!match) return;
+  const input = getElement("depositAmount");
+  if (input) {
+    input.value = match[1];
+    showToast(`Auto-filled ${match[1]} USDT. Click Verify again.`, "success");
+    btn.remove();
+  }
+});
+
+/* =========================================================
+   15. AUTH STATE + INIT
+   ========================================================= */
+onAuthStateChanged(auth, async (user) => {
+  if (!user) {
+    window.location.href = "login.html";
+    return;
+  }
+  currentUser = user;
+
+  /* Navbar info */
+  const name  = user.displayName || "Trader";
+  const first = name.split(" ")[0];
+  const un = getElement("userName");
+  const ua = getElement("userAvatar");
+  if (un) un.textContent = first;
+  if (ua) ua.textContent = first.charAt(0).toUpperCase();
+
+  /* Load balance */
+  let balance = 0;
+  try {
+    const snap = await get(ref(db, `users/${user.uid}`));
+    if (snap.exists()) {
+      const v = snap.val();
+      const b = Number(v.balanceUSD);
+      if (Number.isFinite(b) && b >= 0) balance = b;
+    }
+  } catch (err) {
+    console.warn("Balance load failed:", err);
+  }
+
+  /* Render */
+  renderDepositUI(balance);
+  loadRecentDeposits(user.uid);
+
+  /* Live balance listener */
+  const balanceRef = ref(db, `users/${user.uid}/balanceUSD`);
+  onValue(balanceRef, snap => {
+    if (snap.exists()) updateBalanceUI(snap.val());
+  });
+});
+
+/* Cleanup */
+window.addEventListener("beforeunload", () => {
+  if (balanceTimer) clearInterval(balanceTimer);
 });
