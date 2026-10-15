@@ -1,21 +1,22 @@
 /* =========================================================
    Nexbit — Wallet Page
    File: wallet.js
-   Version: 3.0 (Real balances + locked + live USD value)
+   Version: 4.0 (All tokens + legacy balanceUSD + locked)
 
    FEATURES:
-   - Reads real balances from /balances/{uid}/{asset}
-   - Shows available AND locked separately
-   - Live USD value using Binance + DexScreener prices
-   - Total portfolio value (sum of all asset USD values)
+   - Reads balances from /balances/{uid}/{asset}
+   - Falls back to /users/{uid}/balanceUSD for USDT
+   - Shows ALL 8 assets: USDT, BTC, ETH, XRP, SOL, BNB, DOGE, RND
+   - Available + Locked separately per asset
+   - Live USD values from Binance + DexScreener
+   - Total portfolio value (available + locked)
    - Real-time updates via onValue
-   - Deposit / Withdraw links
-   - No fake data — only verified balances
+   - Empty / loading / error states
+   - No fake data
 
    ⚠ SECURITY NOTE:
-   This is a read-only view. Balance changes must be made
-   via engine.js during internal testing, and via Cloud
-   Functions after public launch.
+   Read-only view. Balance changes via engine.js (internal).
+   Move to Cloud Functions before public launch.
    ========================================================= */
 
 import { initializeApp, getApps, getApp }
@@ -48,35 +49,66 @@ const db   = getDatabase(app);
    2. ENDPOINTS + ASSETS
    ========================================================= */
 const BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/24hr";
-const DEXSCREENER   = "https://api.dexscreener.com/token-pairs/v1/bsc/";
-const RND_ADDRESS   = "0xcF1FbF18bE9202865bcf88E6349B9D207F75942d";
+const DEXSCREENER    = "https://api.dexscreener.com/token-pairs/v1/bsc/";
+const RND_ADDRESS    = "0xcF1FbF18bE9202865bcf88E6349B9D207F75942d";
 
 const PRICE_REFRESH_MS = 30_000;
 
-/* Supported assets and their metadata */
+/* All 8 supported assets */
 const ASSETS = {
-  USDT: { name: "Tether USD",  icon: "₮", cls: "usdt", type: "stable",  price: 1,    change: 0 },
-  BTC:  { name: "Bitcoin",     icon: "₿", cls: "btc",  type: "binance", marketSymbol: "BTCUSDT",  price: null, change: null },
-  ETH:  { name: "Ethereum",    icon: "Ξ", cls: "eth",  type: "binance", marketSymbol: "ETHUSDT",  price: null, change: null },
-  XRP:  { name: "XRP",         icon: "X", cls: "xrp",  type: "binance", marketSymbol: "XRPUSDT",  price: null, change: null },
-  SOL:  { name: "Solana",      icon: "◎", cls: "sol",  type: "binance", marketSymbol: "SOLUSDT",  price: null, change: null },
-  BNB:  { name: "BNB",         icon: "B", cls: "bnb",  type: "binance", marketSymbol: "BNBUSDT",  price: null, change: null },
-  DOGE: { name: "Dogecoin",    icon: "Ð", cls: "doge", type: "binance", marketSymbol: "DOGEUSDT", price: null, change: null },
-  RND:  { name: "RND Token",   icon: "R", cls: "rnd",  type: "dexscreener", price: null, change: null }
+  USDT: {
+    name: "Tether USD",  icon: "₮", cls: "usdt",
+    type: "stable", price: 1, change: 0
+  },
+  BTC: {
+    name: "Bitcoin",  icon: "₿", cls: "btc",
+    type: "binance", marketSymbol: "BTCUSDT",
+    price: null, change: null
+  },
+  ETH: {
+    name: "Ethereum",  icon: "Ξ", cls: "eth",
+    type: "binance", marketSymbol: "ETHUSDT",
+    price: null, change: null
+  },
+  XRP: {
+    name: "XRP",  icon: "X", cls: "xrp",
+    type: "binance", marketSymbol: "XRPUSDT",
+    price: null, change: null
+  },
+  SOL: {
+    name: "Solana",  icon: "◎", cls: "sol",
+    type: "binance", marketSymbol: "SOLUSDT",
+    price: null, change: null
+  },
+  BNB: {
+    name: "BNB",  icon: "B", cls: "bnb",
+    type: "binance", marketSymbol: "BNBUSDT",
+    price: null, change: null
+  },
+  DOGE: {
+    name: "Dogecoin",  icon: "Ð", cls: "doge",
+    type: "binance", marketSymbol: "DOGEUSDT",
+    price: null, change: null
+  },
+  RND: {
+    name: "RND Token",  icon: "R", cls: "rnd",
+    type: "dexscreener",
+    price: null, change: null
+  }
 };
 
 /* =========================================================
    3. STATE
    ========================================================= */
 let currentUser   = null;
-let userBalances  = {};   // { BTC: { available, locked }, USDT: {...}, ... }
+let userBalances  = {};   // { BTC: { available, locked }, USDT: {...} }
+let legacyUSDT    = null; // from /users/{uid}/balanceUSD (fallback)
 let priceTimer    = null;
 let balancesReady = false;
 let pricesReady   = false;
 let binanceInFlight = false;
 let rndInFlight     = false;
 
-/* Real-time unsubscribers */
 const activeListeners = [];
 
 /* =========================================================
@@ -122,15 +154,9 @@ function formatUSD(n) {
 function showToast(msg, ok = true) {
   const t = getElement("toast");
   const m = getElement("toastMsg");
-  if (!t || !m) {
-    console[ok ? "log" : "error"](msg);
-    return;
-  }
+  if (!t || !m) { console[ok ? "log" : "error"](msg); return; }
   m.textContent = msg;
   t.style.borderColor = ok ? "var(--success)" : "var(--danger)";
-  t.style.boxShadow = ok
-    ? "0 0 30px rgba(0,255,163,0.4)"
-    : "0 0 30px rgba(255,77,109,0.4)";
   const c = t.querySelector(".check");
   if (c) {
     c.style.background = ok ? "var(--success)" : "var(--danger)";
@@ -229,9 +255,7 @@ async function fetchRNDPrice() {
     ASSETS.RND.price  = Number(valid[0].priceUsd);
     ASSETS.RND.change = Number(valid[0].priceChange?.h24);
   } catch (_) {}
-  finally {
-    rndInFlight = false;
-  }
+  finally { rndInFlight = false; }
 }
 
 async function refreshAllPrices() {
@@ -248,14 +272,23 @@ function startPriceRefresh() {
 }
 
 /* =========================================================
-   7. BALANCE LOADING
+   7. BALANCE LOADING + LEGACY SUPPORT
    ========================================================= */
 
-/* Load balances once (initial snapshot) */
+/* Load both /balances/{uid} AND /users/{uid}/balanceUSD */
 async function loadBalances(uid) {
   try {
-    const snap = await get(ref(db, `balances/${uid}`));
-    userBalances = snap.exists() ? snap.val() : {};
+    const [balancesSnap, userSnap] = await Promise.all([
+      get(ref(db, `balances/${uid}`)),
+      get(ref(db, `users/${uid}/balanceUSD`))
+    ]);
+
+    /* New structure */
+    userBalances = balancesSnap.exists() ? balancesSnap.val() : {};
+
+    /* Legacy fallback */
+    legacyUSDT = userSnap.exists() ? Number(userSnap.val()) || 0 : null;
+
     balancesReady = true;
     renderPortfolio();
     renderAssets();
@@ -265,29 +298,48 @@ async function loadBalances(uid) {
   }
 }
 
-/* Subscribe to all balances for real-time updates */
+/* Subscribe to real-time balance changes */
 function subscribeBalances(uid) {
+  /* All asset balances */
   const bRef = ref(db, `balances/${uid}`);
-  const unsub = onValue(bRef, (snap) => {
+  const unsubAll = onValue(bRef, (snap) => {
     userBalances = snap.exists() ? snap.val() : {};
     balancesReady = true;
     renderPortfolio();
     renderAssets();
   });
-  activeListeners.push(unsub);
+  activeListeners.push(unsubAll);
+
+  /* Legacy balanceUSD */
+  const legacyRef = ref(db, `users/${uid}/balanceUSD`);
+  const unsubLegacy = onValue(legacyRef, (snap) => {
+    legacyUSDT = snap.exists() ? Number(snap.val()) || 0 : null;
+    renderPortfolio();
+    renderAssets();
+  });
+  activeListeners.push(unsubLegacy);
 }
 
-/* Get balance for an asset (available + locked) */
+/* Get balance for an asset — with legacy fallback for USDT */
 function getBalanceFor(sym) {
   const b = userBalances[sym];
-  if (!b) return { available: 0, locked: 0 };
-  return {
-    available: Number(b.available) || 0,
-    locked: Number(b.locked) || 0
-  };
+
+  /* If new structure has USDT, use it */
+  if (b) {
+    return {
+      available: Number(b.available) || 0,
+      locked:    Number(b.locked)    || 0
+    };
+  }
+
+  /* USDT fallback: check legacy balanceUSD */
+  if (sym === "USDT" && Number.isFinite(legacyUSDT) && legacyUSDT > 0) {
+    return { available: legacyUSDT, locked: 0 };
+  }
+
+  return { available: 0, locked: 0 };
 }
 
-/* Get USD price for an asset */
 function getPriceFor(sym) {
   const asset = ASSETS[sym];
   if (!asset) return 0;
@@ -305,7 +357,6 @@ function renderPortfolio() {
   let totalAvailable = 0;
   let totalLocked = 0;
   let unknownCount = 0;
-  let knownCount = 0;
 
   Object.keys(ASSETS).forEach(sym => {
     const bal = getBalanceFor(sym);
@@ -315,7 +366,6 @@ function renderPortfolio() {
       if (price > 0) {
         totalAvailable += bal.available * price;
         totalLocked    += bal.locked    * price;
-        knownCount++;
       } else {
         unknownCount++;
       }
@@ -323,8 +373,6 @@ function renderPortfolio() {
   });
 
   const total = totalAvailable + totalLocked;
-
-  /* Animated count */
   animateNumber(amountEl, total, 700);
 
   if (subEl) {
@@ -355,7 +403,7 @@ function animateNumber(el, to, duration) {
 }
 
 /* =========================================================
-   9. RENDER — ASSET TABLE
+   9. RENDER — ASSET TABLE (ALL 8 ASSETS)
    ========================================================= */
 function renderAssets() {
   const tbody = getElement("assetBody");
@@ -390,10 +438,10 @@ function renderAssets() {
     };
   });
 
-  /* Filter: only show assets with non-zero balance */
+  /* Filter: only assets with non-zero balance */
   const withBalance = list.filter(a => a.available > 0 || a.locked > 0);
 
-  /* If nothing: empty state */
+  /* Empty wallet message */
   if (!withBalance.length) {
     tbody.innerHTML = `
       <tr>
@@ -418,11 +466,16 @@ function renderAssets() {
       ? (a.change >= 0 ? "price-up" : "price-down")
       : "";
 
-    /* Locked badge if any */
+    /* Locked badge (if any) */
     const lockedBadge = a.locked > 0
       ? `<div style="font-size:0.7rem; color:#ffbd2e; margin-top:3px;">
            🔒 Locked: ${escapeHTML(formatBalance(a.locked))} ${escapeHTML(a.sym)}
          </div>`
+      : "";
+
+    /* USD sub-line (if locked exists) */
+    const usdSubline = a.locked > 0
+      ? `<div style="font-size:0.7rem; color:var(--text-dim);">${escapeHTML(formatUSD(a.availUSD))} available</div>`
       : "";
 
     return `
@@ -442,7 +495,7 @@ function renderAssets() {
         </td>
         <td>
           <div style="font-weight:600;">${escapeHTML(formatUSD(a.totalUSD))}</div>
-          ${a.locked > 0 ? `<div style="font-size:0.7rem; color:var(--text-dim);">${escapeHTML(formatUSD(a.availUSD))} available</div>` : ""}
+          ${usdSubline}
         </td>
         <td class="${changeClass}">${escapeHTML(changeText)}</td>
         <td>
@@ -471,7 +524,7 @@ onAuthStateChanged(auth, async (user) => {
   if (un) un.textContent = first;
   if (ua) ua.textContent = first.charAt(0).toUpperCase();
 
-  /* Show loading state */
+  /* Loading placeholder */
   const tbody = getElement("assetBody");
   if (tbody) {
     tbody.innerHTML = `
@@ -483,11 +536,11 @@ onAuthStateChanged(auth, async (user) => {
       </tr>`;
   }
 
-  /* Load balances + start listening */
+  /* Load + subscribe */
   await loadBalances(user.uid);
   subscribeBalances(user.uid);
 
-  /* Start price refresh */
+  /* Prices */
   startPriceRefresh();
 });
 
