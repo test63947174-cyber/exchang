@@ -1,27 +1,44 @@
 /* =========================================================
    Nexbit — Deposit Page
    File: deposit.js
-   Version: 3.0 (Automatic blockchain verification)
+   Version: 4.0 (Automatic blockchain monitoring + auto-credit)
 
-   Real flow:
-   1. User sends USDT (BEP20) to master wallet
-   2. User enters TXID + amount
-   3. We fetch the transaction from BSC RPC (public)
-   4. We verify: correct contract, correct receiver, amount
-   5. We wait for confirmations
-   6. On success → credit user's balance in Firebase
-   7. Duplicate TXIDs are blocked
+   ARCHITECTURE:
+   1. User logs in → unique BSC deposit address assigned from pool
+   2. User sends USDT (BEP20) to that address
+   3. This script polls BSC RPC every 15s for incoming transfers
+   4. On detection: verify contract + receiver + amount
+   5. Wait for confirmations → credit balance atomically
+   6. Real-time UI updates via Firebase listener
 
-   Contract (USDT BEP20): 0x55d398326f99059fF775485246999027B3197955
-   Master wallet:         0xe757c330D267784F190e79e0Ec0dC5d30ad6eFA4
+   ⚠ SECURITY NOTE — CRITICAL:
+   This runs CLIENT-SIDE for INTERNAL TESTING ONLY.
+   Before public launch, the following MUST move to Cloud Functions:
+   - Blockchain scanning
+   - Balance crediting
+   - Duplicate protection
+   
+   Client-side balance credit is INSECURE. Anyone can modify
+   this code to credit themselves. This is acceptable ONLY for
+   testing with test funds and a closed group.
+
+   Contract (USDT BEP20): 0x55d398326f55d3983...
+   Address pool:          managed in wallet-registry.js
    ========================================================= */
 
 import { initializeApp, getApps, getApp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getDatabase, ref, get, set, update, onValue, runTransaction }
-  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+import {
+  getDatabase, ref, get, set, update, onValue, runTransaction, push
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+/* Import engine for balance credit */
+import engine from "./engine.js";
+
+/* Import wallet registry for address assignment */
+import walletRegistry from "./wallet-registry.js";
 
 /* =========================================================
    1. FIREBASE CONFIG
@@ -44,13 +61,13 @@ const db   = getDatabase(app);
 /* =========================================================
    2. CONFIG — BSC + USDT
    ========================================================= */
-const DEPOSIT_WALLET = "0xe757c330D267784F190e79e0Ec0dC5d30ad6eFA4";
-const USDT_CONTRACT  = "0x55d398326f99059fF775485246999027B3197955"; // BEP20 USDT
+const CHAIN_ID = 56;                                       // BSC Mainnet
+const USDT_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"; // USDT BEP20
+const USDT_DECIMALS = 18;
 const MIN_CONFIRMATIONS = 3;
-const POLL_INTERVAL_MS  = 15_000;
-const AMOUNT_TOLERANCE  = 0.005;   // ±0.5%
+const MIN_DEPOSIT_USDT  = 1;
 
-/* Multiple BSC RPC endpoints for reliability */
+/* Multiple RPC endpoints */
 const BSC_RPCS = [
   "https://bsc-dataseed.binance.org/",
   "https://bsc-dataseed1.defibit.io/",
@@ -58,14 +75,29 @@ const BSC_RPCS = [
   "https://rpc.ankr.com/bsc"
 ];
 
-/* BSCScan links */
+/* BSCScan */
 const BSC_EXPLORER = "https://bscscan.com/";
+
+/* Polling interval */
+const POLL_INTERVAL_MS = 15_000;   // 15 seconds
+
+/* Transfer(address,address,uint256) topic */
+const TRANSFER_TOPIC =
+  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 /* =========================================================
    3. STATE
    ========================================================= */
-let currentUser  = null;
-let balanceTimer = null;
+let currentUser   = null;
+let userAddress   = null;    // BSC deposit address assigned to this user
+let userAddressInfo = null;  // full record
+let pollTimer     = null;
+let lastScannedBlock = null;
+let isPolling     = false;
+let listeners     = [];
+
+/* Cache of already-credited deposits to avoid re-checking */
+const creditedTxSet = new Set();
 
 /* =========================================================
    4. HELPERS
@@ -74,24 +106,23 @@ function getElement(id) { return document.getElementById(id); }
 
 function escapeHTML(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;",
-    '"': "&quot;", "'": "&#39;"
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
   })[c]);
 }
 
-function showToast(message, type = "success", duration = 5000) {
+function showToast(message, type = "success", duration = null) {
   const container = getElement("toastContainer");
   if (!container) return;
 
-  const icons = {
-    success: "✓", error: "✕", warning: "⚠", info: "ℹ"
-  };
+  const icons  = { success: "✓", error: "✕", warning: "⚠", info: "ℹ" };
   const colors = {
     success: "var(--neon-green)",
-    error: "var(--danger)",
+    error:   "var(--danger)",
     warning: "var(--warning)",
-    info: "var(--neon-cyan)"
+    info:    "var(--neon-cyan)"
   };
+
+  const show = duration || (type === "error" ? 8000 : type === "warning" ? 7000 : 5000);
 
   const toast = document.createElement("div");
   toast.className = `toast-custom ${type}`;
@@ -107,7 +138,17 @@ function showToast(message, type = "success", duration = 5000) {
     toast.style.opacity = "0";
     toast.style.transform = "translateX(120%)";
     setTimeout(() => toast.remove(), 300);
-  }, duration);
+  }, show);
+}
+
+function shortAddress(addr) {
+  if (!addr) return "—";
+  return addr.slice(0, 8) + "…" + addr.slice(-6);
+}
+
+function shortHash(h) {
+  if (!h) return "—";
+  return h.slice(0, 12) + "…" + h.slice(-6);
 }
 
 /* =========================================================
@@ -126,6 +167,7 @@ document.addEventListener("keydown", e => {
 
 window.logoutUser = async (e) => {
   if (e) e.preventDefault();
+  stopPolling();
   try {
     await signOut(auth);
     localStorage.removeItem("Nexbit_User");
@@ -134,215 +176,362 @@ window.logoutUser = async (e) => {
 };
 
 /* =========================================================
-   6. BSC RPC — JSON-RPC helpers
-   We use raw JSON-RPC calls via fetch so that no external
-   library is required. Everything runs from the browser.
+   6. BSC RPC CALLS
    ========================================================= */
 
-/* Call `eth_getTransactionReceipt` for the TX hash */
-async function rpcGetReceipt(txHash) {
+async function rpcCall(method, params) {
   for (const rpc of BSC_RPCS) {
     try {
       const resp = await fetch(rpc, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          jsonrpc: "2.0", id: 1,
-          method: "eth_getTransactionReceipt",
-          params: [txHash]
+          jsonrpc: "2.0", id: Date.now(),
+          method, params
         }),
         signal: AbortSignal.timeout(8000)
       });
       if (!resp.ok) continue;
       const data = await resp.json();
-      if (data && data.result) return data.result;
+      if (data && data.result !== undefined) return data.result;
       if (data && data.error) throw new Error(data.error.message || "RPC error");
     } catch (err) {
       console.warn(`RPC ${rpc} failed:`, err.message);
     }
   }
-  throw new Error("All RPC endpoints failed for receipt");
+  throw new Error(`All RPCs failed for ${method}`);
 }
 
-/* Call `eth_blockNumber` */
 async function rpcBlockNumber() {
-  for (const rpc of BSC_RPCS) {
-    try {
-      const resp = await fetch(rpc, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0", id: 1,
-          method: "eth_blockNumber",
-          params: []
-        }),
-        signal: AbortSignal.timeout(8000)
-      });
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      if (data && data.result) return parseInt(data.result, 16);
-    } catch (err) { /* try next */ }
-  }
-  throw new Error("Could not fetch current block number");
+  const hex = await rpcCall("eth_blockNumber", []);
+  return parseInt(hex, 16);
 }
 
-/* Standard ERC20/BEP20 Transfer event signature:
-   keccak256("Transfer(address,address,uint256)") */
-const TRANSFER_TOPIC =
-  "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+async function rpcGetLogs(fromBlock, toBlock, address, topics) {
+  return rpcCall("eth_getLogs", [{
+    fromBlock: "0x" + fromBlock.toString(16),
+    toBlock:   "0x" + toBlock.toString(16),
+    address,
+    topics
+  }]);
+}
 
-/* Convert hex → decimal string (safe for big numbers) */
-function hexToDecimal(hex) {
-  if (!hex) return "0";
-  return BigInt(hex).toString();
+async function rpcGetTransactionReceipt(txHash) {
+  return rpcCall("eth_getTransactionReceipt", [txHash]);
 }
 
 /* =========================================================
-   7. VERIFY A DEPOSIT (core logic)
+   7. ADDRESS ASSIGNMENT (uses wallet-registry)
    ========================================================= */
-async function verifyDepositOnChain(txHash, expectedAmount, userId) {
-  /* ---------- 1. Get receipt ---------- */
-  const receipt = await rpcGetReceipt(txHash);
-  if (!receipt) throw new Error("Transaction not found on BSC");
-  if (receipt.status !== "0x1") throw new Error("Transaction failed on blockchain");
+async function ensureUserAddress(uid) {
+  /* Check if user already has an address */
+  const existing = await walletRegistry.getUserAddress(uid);
+  if (existing) return existing;
 
-  const txBlock = parseInt(receipt.blockNumber, 16);
-
-  /* ---------- 2. Find USDT Transfer event to our wallet ---------- */
-  const depositAddr = DEPOSIT_WALLET.toLowerCase().replace(/^0x/, "");
-  const padded = "0x" + depositAddr.padStart(64, "0");
-
-  let match = null;
-  for (const log of (receipt.logs || [])) {
-    if (log.address?.toLowerCase() !== USDT_CONTRACT.toLowerCase()) continue;
-    if (!log.topics || log.topics[0] !== TRANSFER_TOPIC) continue;
-    if (log.topics[2]?.toLowerCase() !== padded.toLowerCase()) continue;
-
-    match = log;
-    break;
+  /* Assign a new one from pool */
+  const assigned = await walletRegistry.assignAddress(uid);
+  if (!assigned) {
+    throw new Error("No deposit addresses available in the pool. Contact admin.");
   }
-
-  if (!match) {
-    throw new Error("No USDT transfer to deposit wallet in this transaction");
-  }
-
-  /* ---------- 3. Decode amount (BEP20 USDT has 18 decimals) ---------- */
-  const rawAmount = BigInt(match.data);
-  const decimals = 18n;
-  const divisor = 10n ** decimals;
-
-  /* Keep precision as string, then to number with 6 decimals */
-  const whole = rawAmount / divisor;
-  const fraction = rawAmount % divisor;
-  const fractionStr = fraction.toString().padStart(18, "0").slice(0, 6);
-  const amountStr = `${whole}.${fractionStr}`;
-  const amountNum = parseFloat(amountStr);
-
-  /* ---------- 4. Compare with expected ---------- */
-  const diff = Math.abs(amountNum - expectedAmount);
-  const tolerance = Math.max(expectedAmount * AMOUNT_TOLERANCE, 0.01);
-
-  if (diff > tolerance) {
-    const err = new Error(`Amount mismatch: blockchain shows ${amountStr}`);
-    err.chainAmount = amountNum;
-    err.chainAmountStr = amountStr;
-    throw err;
-  }
-
-  return {
-    amount: amountNum,
-    amountStr,
-    blockNumber: txBlock,
-    receiver: depositAddr
-  };
+  return assigned;
 }
 
 /* =========================================================
-   8. WAIT FOR CONFIRMATIONS
+   8. DUPLICATE / CREDIT PROTECTION
    ========================================================= */
-async function waitForConfirmations(txHash, onProgress) {
-  while (true) {
-    const receipt = await rpcGetReceipt(txHash);
-    if (!receipt) throw new Error("Transaction disappeared from BSC");
-    if (receipt.status !== "0x1") throw new Error("Transaction failed");
+function eventKey(txHash, logIndex) {
+  return `56_${txHash}_${logIndex}`;
+}
 
-    const txBlock = parseInt(receipt.blockNumber, 16);
-    const currentBlock = await rpcBlockNumber();
-    const confirmations = Math.max(0, currentBlock - txBlock);
+async function isEventProcessed(key) {
+  const snap = await get(ref(db, `depositEvents/${key}`));
+  return snap.exists();
+}
 
-    if (onProgress) onProgress(confirmations, txBlock, currentBlock);
+async function markEventProcessing(key, data) {
+  await set(ref(db, `depositEvents/${key}`), {
+    ...data,
+    processingStatus: "processing",
+    startedAt: new Date().toISOString()
+  });
+}
 
-    if (confirmations >= MIN_CONFIRMATIONS) {
-      return { confirmations, blockNumber: txBlock };
+async function markEventDone(key, status = "credited") {
+  await update(ref(db, `depositEvents/${key}`), {
+    processingStatus: status,
+    completedAt: new Date().toISOString()
+  });
+}
+
+/* =========================================================
+   9. SCAN FOR DEPOSITS (core)
+   ========================================================= */
+async function scanForDeposits() {
+  if (isPolling || !currentUser || !userAddress) return;
+  isPolling = true;
+
+  try {
+    const latest = await rpcBlockNumber();
+
+    /* First run: start from latest - 100 blocks */
+    if (lastScannedBlock === null) {
+      lastScannedBlock = latest - 100;
     }
 
-    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+    /* Don't scan too many blocks at once */
+    const fromBlock = lastScannedBlock + 1;
+    const toBlock   = Math.min(latest, fromBlock + 200);
+    if (fromBlock > toBlock) {
+      isPolling = false;
+      return;
+    }
+
+    /* Filter: USDT Transfer to our user's address */
+    const paddedTo = "0x" + userAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+
+    const logs = await rpcGetLogs(fromBlock, toBlock, USDT_CONTRACT, [
+      TRANSFER_TOPIC,
+      null,          // from = any
+      paddedTo       // to = our user's address
+    ]);
+
+    if (Array.isArray(logs) && logs.length > 0) {
+      for (const log of logs) {
+        try {
+          await processDepositLog(log);
+        } catch (err) {
+          console.warn("Deposit log processing failed:", err);
+        }
+      }
+    }
+
+    lastScannedBlock = toBlock;
+
+    /* Update UI scanning status */
+    updateScanStatus(toBlock);
+
+  } catch (err) {
+    console.warn("Scan failed:", err);
+    updateScanStatus(null, err.message);
+  } finally {
+    isPolling = false;
   }
 }
 
 /* =========================================================
-   9. CREDIT USER BALANCE (atomic & duplicate-safe)
+   10. PROCESS A SINGLE DEPOSIT LOG
    ========================================================= */
-async function creditBalance(userId, txHash, amount, blockNumber) {
-  /* Check if this TXID has already been credited */
-  const usedRef = ref(db, `usedTxIds/${txHash}`);
-  const usedSnap = await get(usedRef);
-  if (usedSnap.exists()) {
-    throw new Error("This transaction hash has already been used.");
+async function processDepositLog(log) {
+  const txHash    = log.transactionHash;
+  const logIndex  = parseInt(log.logIndex, 16);
+  const blockNum  = parseInt(log.blockNumber, 16);
+  const key       = eventKey(txHash, logIndex);
+
+  /* Duplicate protection via local cache */
+  if (creditedTxSet.has(key)) return;
+
+  /* Duplicate protection via Firebase */
+  if (await isEventProcessed(key)) {
+    creditedTxSet.add(key);
+    return;
   }
 
-  /* Mark as used (transaction ensures atomicity) */
-  await set(usedRef, {
-    userId,
+  /* Decode amount */
+  const rawAmount = BigInt(log.data);
+  const divisor   = 10n ** BigInt(USDT_DECIMALS);
+  const whole = rawAmount / divisor;
+  const frac  = rawAmount % divisor;
+  const fracStr = frac.toString().padStart(USDT_DECIMALS, "0").slice(0, 6);
+  const amount = parseFloat(`${whole}.${fracStr}`);
+
+  if (!Number.isFinite(amount) || amount < MIN_DEPOSIT_USDT) {
+    console.log(`Ignoring deposit below minimum (${amount})`);
+    return;
+  }
+
+  /* Confirm transaction was successful */
+  const receipt = await rpcGetTransactionReceipt(txHash);
+  if (!receipt || receipt.status !== "0x1") {
+    console.log("Transaction failed or missing:", txHash);
+    return;
+  }
+
+  /* Wait for confirmations */
+  const currentBlock = await rpcBlockNumber();
+  const confirmations = Math.max(0, currentBlock - blockNum);
+  if (confirmations < MIN_CONFIRMATIONS) {
+    console.log(`Only ${confirmations} confirmations, waiting…`);
+    return;
+  }
+
+  /* Mark as processing */
+  await markEventProcessing(key, {
+    txHash,
+    logIndex,
+    blockNumber: blockNum,
+    chainId: CHAIN_ID,
+    tokenContract: USDT_CONTRACT,
+    toAddress: userAddress,
+    amountRaw: rawAmount.toString(),
     amount,
-    blockNumber,
-    usedAt: new Date().toISOString()
+    uid: currentUser.uid
   });
-
-  /* Increment user's USD balance */
-  const balanceRef = ref(db, `users/${userId}/balanceUSD`);
-  const result = await runTransaction(balanceRef, current => {
-    const prev = Number(current) || 0;
-    return prev + amount;
-  });
-
-  const newBalance = result.snapshot.val() || 0;
 
   /* Save deposit record */
-  const depositId = `${Date.now()}_${txHash.slice(2, 10)}`;
-  await set(ref(db, `users/${userId}/deposits/${depositId}`), {
+  const depositId = `dep_${Date.now()}_${txHash.slice(2, 10)}`;
+  await set(ref(db, `deposits/${depositId}`), {
+    uid: currentUser.uid,
     txHash,
+    logIndex,
+    chainId: CHAIN_ID,
+    tokenContract: USDT_CONTRACT,
+    fromAddress: log.topics[1] ? "0x" + log.topics[1].slice(26) : "",
+    toAddress: userAddress,
+    amountRaw: rawAmount.toString(),
     amount,
-    blockNumber,
-    confirmations: MIN_CONFIRMATIONS,
+    blockNumber: blockNum,
+    confirmations,
+    status: "confirmed",
+    detectedAt: new Date().toISOString(),
+    confirmedAt: new Date().toISOString()
+  });
+
+  /* Save to user's deposits */
+  await set(ref(db, `users/${currentUser.uid}/deposits/${depositId}`), {
+    txHash,
+    logIndex,
+    amount,
+    blockNumber: blockNum,
+    confirmations,
     asset: "USDT",
     network: "BEP20",
     status: "confirmed",
     createdAt: new Date().toISOString()
   });
 
-  /* Also record in recent transactions */
-  await set(ref(db, `users/${userId}/transactions/${depositId}`), {
+  /* Save to user's transactions */
+  await set(ref(db, `users/${currentUser.uid}/transactions/${depositId}`), {
     type: "deposit",
     asset: "USDT",
     amount,
     txHash,
-    blockNumber,
+    blockNumber: blockNum,
     status: "success",
     timestamp: Date.now()
   });
 
-  return newBalance;
+  /* Credit balance via engine (atomic) */
+  try {
+    await engine.ensureWallets(currentUser.uid);
+    await engine.creditBalance(
+      currentUser.uid,
+      "USDT",
+      amount,
+      `deposit_${txHash}`
+    );
+
+    /* Mark event done */
+    await markEventDone(key, "credited");
+    creditedTxSet.add(key);
+
+    /* Update UI */
+    updateStatus("credited", {
+      amount,
+      txHash,
+      blockNumber: blockNum
+    });
+    showToast(`✅ Deposit credited: ${amount.toFixed(4)} USDT`, "success", 8000);
+
+    /* Update balance display */
+    const newBal = await engine.getBalance(currentUser.uid, "USDT");
+    updateBalanceUI(newBal.available);
+
+    /* Refresh recent deposits list */
+    refreshDepositsList();
+
+  } catch (err) {
+    console.error("Credit failed:", err);
+    await markEventDone(key, "failed");
+    updateStatus("failed", { amount, txHash, error: err.message });
+    showToast(`Credit failed: ${err.message}`, "error", 8000);
+  }
 }
 
 /* =========================================================
-   10. LOAD RECENT DEPOSITS (real-time)
+   11. STATUS UI UPDATES
    ========================================================= */
-function loadRecentDeposits(userId) {
+function updateScanStatus(blockNumber, error) {
+  const el = getElement("scanStatus");
+  const blockEl = getElement("scanBlock");
+  if (!el) return;
+
+  if (error) {
+    el.textContent = "Scanner error";
+    el.className = "status-value failed";
+    if (blockEl) blockEl.textContent = error;
+    return;
+  }
+
+  el.textContent = "Scanning";
+  el.className = "status-value confirming";
+  if (blockEl) blockEl.textContent = blockNumber ? `Block #${blockNumber}` : "…";
+}
+
+function updateStatus(type, data = {}) {
+  const statusEl = getElement("depositStatus");
+  const amountEl = getElement("statusAmount");
+  const txEl     = getElement("statusTx");
+  const blockEl  = getElement("statusBlock");
+
+  if (!statusEl) return;
+
+  const labels = {
+    waiting:    { text: "Waiting for transfer", cls: "waiting" },
+    detected:   { text: "Deposit detected",     cls: "detected" },
+    confirming: { text: "Confirming…",          cls: "confirming" },
+    credited:   { text: "Credited ✓",           cls: "credited" },
+    failed:     { text: "Failed",               cls: "failed" }
+  };
+
+  const l = labels[type] || labels.waiting;
+  statusEl.className = `status-value ${l.cls}`;
+  statusEl.innerHTML = `
+    <span class="pulse-dot"></span>
+    ${l.text}
+  `;
+
+  if (amountEl && data.amount !== undefined) {
+    amountEl.textContent = `${Number(data.amount).toFixed(6)} USDT`;
+  }
+  if (txEl && data.txHash) {
+    txEl.innerHTML = `
+      <a href="${BSC_EXPLORER}tx/${data.txHash}" target="_blank" rel="noopener noreferrer" class="tx-link">
+        ${escapeHTML(shortHash(data.txHash))}
+      </a>
+    `;
+  }
+  if (blockEl && data.blockNumber) {
+    blockEl.textContent = `#${data.blockNumber}`;
+  }
+  if (data.error) {
+    if (blockEl) blockEl.textContent = data.error;
+  }
+}
+
+function updateBalanceUI(newBalance) {
+  const el = getElement("depositBalance");
+  if (el) el.textContent = "$" + (Number(newBalance) || 0).toFixed(2);
+}
+
+/* =========================================================
+   12. DEPOSITS LIST
+   ========================================================= */
+function refreshDepositsList() {
+  if (!currentUser) return;
   const wrap = getElement("recentDeposits");
   if (!wrap) return;
 
-  const depositsRef = ref(db, `users/${userId}/deposits`);
+  const depositsRef = ref(db, `users/${currentUser.uid}/deposits`);
   onValue(depositsRef, snap => {
     if (!snap.exists()) {
       wrap.innerHTML = `
@@ -363,7 +552,10 @@ function loadRecentDeposits(userId) {
       const dateStr = d.createdAt
         ? new Date(d.createdAt).toLocaleString("en-IN")
         : "—";
-      const shortHash = d.txHash ? d.txHash.slice(0, 16) + "…" : "";
+      const shortTx = d.txHash ? shortHash(d.txHash) : "";
+      const txLink = d.txHash
+        ? `<a href="${BSC_EXPLORER}tx/${d.txHash}" target="_blank" rel="noopener noreferrer" class="tx-link">${escapeHTML(shortTx)}</a>`
+        : "—";
 
       return `
         <div class="deposit-item">
@@ -372,59 +564,54 @@ function loadRecentDeposits(userId) {
             <div class="date">${escapeHTML(dateStr)}</div>
           </div>
           <div style="text-align:right;">
-            <span class="status">
-              ✓ Verified (Blockchain)
-            </span>
+            <span class="badge-verified">✓ Verified</span>
             <div class="badges">
               ${d.blockNumber ? `<span class="badge-mini badge-block">Block: ${escapeHTML(String(d.blockNumber))}</span>` : ""}
-              ${shortHash ? `<span class="badge-mini badge-hash">${escapeHTML(shortHash)}</span>` : ""}
+              ${txLink}
             </div>
           </div>
         </div>
       `;
     }).join("");
-  }, err => {
-    console.error("Recent deposits error:", err);
-    wrap.innerHTML = `<div class="empty-state"><p style="color:var(--danger);">Unable to load deposits.</p></div>`;
   });
 }
 
 /* =========================================================
-   11. RENDER THE PAGE
+   13. RENDER PAGE
    ========================================================= */
-function renderDepositUI(currentBalance = 0) {
+function renderDepositUI(balance, address) {
   const container = getElement("depositContent");
   if (!container) return;
 
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(DEPOSIT_WALLET)}&color=00f0ff&bgcolor=050814`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(address)}&color=00f0ff&bgcolor=050814`;
 
   container.innerHTML = `
     <div class="page-head">
       <h1>Deposit <span>USDT</span></h1>
-      <p>Send USDT (BEP20) to your deposit address, then verify on blockchain.</p>
+      <p>Send USDT (BEP20) to your unique deposit address — balance credits automatically.</p>
     </div>
 
     <!-- Balance Card -->
     <div class="balance-card">
       <div class="balance-label">Your USDT Balance</div>
-      <div class="balance-amount" id="depositBalance">$${(Number(currentBalance) || 0).toFixed(2)}</div>
+      <div class="balance-amount" id="depositBalance">$${(Number(balance) || 0).toFixed(2)}</div>
       <div class="balance-badge">
-        <span>🛡</span> Blockchain Verified
+        <span>🛡</span> Auto-Verified on BSC
       </div>
     </div>
 
     <!-- Deposit Card -->
     <div class="deposit-card">
-      <div class="card-title"><span class="ico">📥</span> Send USDT (BEP20)</div>
+      <div class="card-title"><span class="ico">📥</span> Your Unique Deposit Address</div>
 
       <div class="qr-address-grid">
         <div class="qr-box">
-          <img src="${qrUrl}" alt="QR Code" />
+          <img src="${qrUrl}" alt="Deposit QR" />
         </div>
 
         <div class="address-block">
-          <div class="address-label">Your Deposit Address</div>
-          <div class="address-value" id="depositAddress">${escapeHTML(DEPOSIT_WALLET)}</div>
+          <div class="address-label">BNB Smart Chain (BEP20) · USDT</div>
+          <div class="address-value" id="depositAddress">${escapeHTML(address)}</div>
 
           <div class="address-actions">
             <button class="btn btn-primary" id="copyAddressBtn">📋 Copy Address</button>
@@ -432,56 +619,74 @@ function renderDepositUI(currentBalance = 0) {
           </div>
 
           <div class="address-note">
-            <strong>Only send USDT (BEP20) to this address.</strong>
-            <br>
-            Contract: <span class="contract">${escapeHTML(USDT_CONTRACT)}</span>
+            <strong>⚠ Only send USDT (BEP20) to this address.</strong><br>
+            Sending any other token or on any other network will result in
+            <strong>permanent loss of funds</strong>.<br>
+            Minimum deposit: <strong>${MIN_DEPOSIT_USDT} USDT</strong>.
           </div>
+        </div>
+      </div>
+
+      <!-- Auto-monitoring status -->
+      <div class="status-panel">
+        <div class="status-panel-title">🔴 Live Deposit Monitoring</div>
+
+        <div class="status-row">
+          <span class="status-label">Status</span>
+          <span class="status-value waiting" id="depositStatus">
+            <span class="pulse-dot"></span>
+            Waiting for transfer
+          </span>
+        </div>
+
+        <div class="status-row">
+          <span class="status-label">Detected Amount</span>
+          <span class="status-value" id="statusAmount">—</span>
+        </div>
+
+        <div class="status-row">
+          <span class="status-label">Transaction</span>
+          <span class="status-value" id="statusTx">—</span>
+        </div>
+
+        <div class="status-row">
+          <span class="status-label">Block</span>
+          <span class="status-value" id="statusBlock">—</span>
+        </div>
+
+        <div class="status-row">
+          <span class="status-label">Scanner</span>
+          <span class="status-value confirming" id="scanStatus">
+            <span class="pulse-dot"></span>
+            Starting…
+          </span>
+        </div>
+
+        <div class="status-row">
+          <span class="status-label">Last Block</span>
+          <span class="status-value" id="scanBlock">—</span>
         </div>
       </div>
     </div>
 
-    <!-- Verify Card -->
+    <!-- Warning Box -->
     <div class="deposit-card">
-      <div class="card-title"><span class="ico">🔒</span> Verify Deposit on Blockchain</div>
+      <div class="card-title"><span class="ico">⚠️</span> Important Safety Information</div>
 
-      <div class="info-alert">
-        <strong>Real Blockchain Verification:</strong> Your transaction is verified directly on the
-        BSC blockchain.
-        <br>
-        Minimum confirmations required: <strong>${MIN_CONFIRMATIONS}</strong>
-        <br>
-        <span class="x">✕ Cannot be faked or bypassed.</span>
-      </div>
-
-      <form id="depositForm" class="verify-form">
-        <div class="verify-grid">
-          <div class="form-group">
-            <label class="form-label" for="depositAmount">
-              Amount Sent (USDT) <span class="req">*</span>
-            </label>
-            <input type="number" id="depositAmount" class="form-control"
-                   placeholder="e.g. 5.012" min="0.01" step="any" required>
-            <span class="form-hint">Exact amount you sent</span>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" for="txHash">
-              Transaction Hash (TXID) <span class="req">*</span>
-            </label>
-            <input type="text" id="txHash" class="form-control"
-                   placeholder="0x…" required>
-            <span class="form-hint">Real BSC transaction hash</span>
-          </div>
-
-          <div class="verify-btn-wrap">
-            <button type="submit" class="btn btn-primary" id="verifyBtn">
-              Verify Deposit
-            </button>
-          </div>
+      <div class="warning-box">
+        <span class="icon">⚠️</span>
+        <div>
+          <strong>Send only USDT on BNB Smart Chain (BEP20)</strong>
+          <ul>
+            <li>Network: <strong>BNB Smart Chain (BSC)</strong></li>
+            <li>Token: <strong>USDT (BEP20)</strong></li>
+            <li>Contract: <span class="contract">${USDT_CONTRACT}</span></li>
+            <li>Minimum: <strong>${MIN_DEPOSIT_USDT} USDT</strong></li>
+            <li>Confirmations required: <strong>${MIN_CONFIRMATIONS}</strong></li>
+            <li><strong>Do NOT</strong> send ERC20, TRC20 or any other token/network</li>
+          </ul>
         </div>
-      </form>
-
-      <div id="verificationStatus" class="verification-status"></div>
+      </div>
     </div>
 
     <!-- Recent Deposits -->
@@ -497,25 +702,19 @@ function renderDepositUI(currentBalance = 0) {
   `;
 
   /* Bind buttons */
-  getElement("copyAddressBtn")?.addEventListener("click", () => {
-    copyToClipboard(DEPOSIT_WALLET);
-  });
-
+  getElement("copyAddressBtn")?.addEventListener("click", () => copyToClipboard(address));
   getElement("shareAddressBtn")?.addEventListener("click", async () => {
-    const text = `Deposit USDT (BEP20) to:\n${DEPOSIT_WALLET}`;
+    const text = `Deposit USDT (BEP20) to:\n${address}\nNetwork: BNB Smart Chain`;
     if (navigator.share) {
       try { await navigator.share({ title: "Nexbit Deposit", text }); } catch (_) {}
     } else {
       copyToClipboard(text);
     }
   });
-
-  /* Wire the form (only once, on this render) */
-  attachFormHandler();
 }
 
 /* =========================================================
-   12. COPY HELPER
+   14. COPY HELPER
    ========================================================= */
 async function copyToClipboard(text) {
   try {
@@ -539,157 +738,24 @@ async function copyToClipboard(text) {
 }
 
 /* =========================================================
-   13. VERIFICATION STATUS UI
+   15. POLLING
    ========================================================= */
-function updateVerificationStatus(type, html) {
-  const el = getElement("verificationStatus");
-  if (!el) return;
-  el.className = `verification-status show ${type}`;
-  el.innerHTML = html;
+function startPolling() {
+  stopPolling();
+  scanForDeposits();                          // run now
+  pollTimer = setInterval(scanForDeposits, POLL_INTERVAL_MS);
 }
 
-function updateBalanceUI(newBalance) {
-  const el = getElement("depositBalance");
-  if (el) el.textContent = "$" + (Number(newBalance) || 0).toFixed(2);
+function stopPolling() {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = null;
 }
 
 /* =========================================================
-   14. FORM HANDLER
-   ========================================================= */
-function attachFormHandler() {
-  const form = getElement("depositForm");
-  if (!form || form.dataset.bound === "1") return;
-  form.dataset.bound = "1";
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-
-    if (!currentUser) {
-      showToast("Please log in first.", "error");
-      return;
-    }
-
-    const amountInput = getElement("depositAmount");
-    const txHashInput = getElement("txHash");
-    const verifyBtn   = getElement("verifyBtn");
-
-    const amount = parseFloat(amountInput.value);
-    const txHash = (txHashInput.value || "").trim();
-
-    /* --- Basic validation --- */
-    if (!amount || amount <= 0) {
-      showToast("Enter a valid amount (greater than 0).", "error"); return;
-    }
-    if (!txHash || txHash.length < 20) {
-      showToast("Enter a valid transaction hash.", "error"); return;
-    }
-    if (!txHash.startsWith("0x")) {
-      showToast('Transaction hash must start with "0x".', "error"); return;
-    }
-    if (verifyBtn.disabled) {
-      showToast("Please wait, verification already running…", "info"); return;
-    }
-
-    verifyBtn.disabled = true;
-    const originalHTML = verifyBtn.innerHTML;
-    verifyBtn.innerHTML = "Verifying…";
-
-    updateVerificationStatus(
-      "pending",
-      `<span class="polling-indicator"></span>
-       <strong>Verifying on BSC blockchain…</strong>
-       <br><small>Please wait, this may take a moment.</small>`
-    );
-
-    try {
-      /* --- Step 1: Verify on-chain (amount, contract, receiver) --- */
-      const chainResult = await verifyDepositOnChain(txHash, amount, currentUser.uid);
-
-      /* --- Step 2: Wait for confirmations --- */
-      const final = await waitForConfirmations(txHash, (confirmations) => {
-        updateVerificationStatus(
-          "polling",
-          `<span class="polling-indicator"></span>
-           <strong>Waiting for confirmations…</strong> (${confirmations}/${MIN_CONFIRMATIONS})
-           <br><small>Confirmed block: ${chainResult.blockNumber}</small>`
-        );
-      });
-
-      /* --- Step 3: Credit balance --- */
-      const newBalance = await creditBalance(
-        currentUser.uid,
-        txHash,
-        chainResult.amount,
-        final.blockNumber
-      );
-
-      updateVerificationStatus(
-        "success",
-        `<strong>✓ Deposit Successfully Credited!</strong>
-         <br>Amount: <strong>$${chainResult.amount.toFixed(6)} USDT</strong>
-         <br>New Balance: <strong>$${Number(newBalance).toFixed(2)} USDT</strong>
-         <br>Verified on BSC Block: <strong>${final.blockNumber}</strong>`
-      );
-      showToast(`✅ Deposit of $${chainResult.amount.toFixed(4)} USDT credited!`, "success", 6000);
-      updateBalanceUI(newBalance);
-      amountInput.value = "";
-      txHashInput.value = "";
-
-    } catch (err) {
-      console.error("Deposit error:", err);
-
-      if (err.chainAmount !== undefined) {
-        /* Amount mismatch — give a helpful hint */
-        updateVerificationStatus(
-          "error",
-          `<strong>💰 Amount Mismatch</strong>
-           <br>You entered: <strong>${amount} USDT</strong>
-           <br>Blockchain shows: <strong>${err.chainAmountStr} USDT</strong>
-           <br><br>
-           <button type="button" class="auto-fill-btn" id="autoFillBtn">
-             Auto-fill ${err.chainAmountStr} USDT
-           </button>`
-        );
-        showToast(`Amount mismatch. Blockchain shows ${err.chainAmountStr} USDT.`, "warning", 8000);
-      } else {
-        /* Generic error */
-        updateVerificationStatus(
-          "error",
-          `<strong>✕ Verification Failed</strong>
-           <br><small>${escapeHTML(err.message || "Unknown error")}</small>`
-        );
-        showToast(err.message || "Verification failed.", "error", 8000);
-      }
-
-    } finally {
-      verifyBtn.disabled = false;
-      verifyBtn.innerHTML = originalHTML;
-    }
-  });
-}
-
-/* Auto-fill button handler */
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest("#autoFillBtn");
-  if (!btn) return;
-  const match = btn.textContent.match(/([\d.]+)/);
-  if (!match) return;
-  const input = getElement("depositAmount");
-  if (input) {
-    input.value = match[1];
-    showToast(`Auto-filled ${match[1]} USDT. Click Verify again.`, "success");
-    btn.remove();
-  }
-});
-
-/* =========================================================
-   15. AUTH STATE + INIT
+   16. AUTH STATE
    ========================================================= */
 onAuthStateChanged(auth, async (user) => {
-  if (!user) {
-    window.location.href = "login.html";
-    return;
-  }
+  if (!user) { window.location.href = "login.html"; return; }
   currentUser = user;
 
   /* Navbar info */
@@ -700,31 +766,69 @@ onAuthStateChanged(auth, async (user) => {
   if (un) un.textContent = first;
   if (ua) ua.textContent = first.charAt(0).toUpperCase();
 
-  /* Load balance */
-  let balance = 0;
-  try {
-    const snap = await get(ref(db, `users/${user.uid}`));
-    if (snap.exists()) {
-      const v = snap.val();
-      const b = Number(v.balanceUSD);
-      if (Number.isFinite(b) && b >= 0) balance = b;
-    }
-  } catch (err) {
-    console.warn("Balance load failed:", err);
+  /* Show loading */
+  const container = getElement("depositContent");
+  if (container) {
+    container.innerHTML = `
+      <div class="loading-box">
+        <div class="spinner"></div>
+        <div>Assigning your deposit address…</div>
+      </div>`;
   }
 
-  /* Render */
-  renderDepositUI(balance);
-  loadRecentDeposits(user.uid);
+  try {
+    /* Ensure engine wallets for USDT */
+    await engine.ensureWallets(user.uid);
 
-  /* Live balance listener */
-  const balanceRef = ref(db, `users/${user.uid}/balanceUSD`);
-  onValue(balanceRef, snap => {
-    if (snap.exists()) updateBalanceUI(snap.val());
-  });
+    /* Get or assign deposit address */
+    const address = await ensureUserAddress(user.uid);
+    userAddress = address;
+
+    console.log("[deposit] User address:", userAddress);
+
+    /* Fetch balance */
+    let balance = 0;
+    try {
+      const bal = await engine.getBalance(user.uid, "USDT");
+      balance = bal.available || 0;
+    } catch (_) {}
+
+    /* Render UI */
+    renderDepositUI(balance, userAddress);
+
+    /* Load deposits */
+    refreshDepositsList();
+
+    /* Live balance listener */
+    const balRef = ref(db, `balances/${user.uid}/USDT`);
+    const unsubBal = onValue(balRef, snap => {
+      if (snap.exists()) {
+        const v = snap.val();
+        updateBalanceUI(v.available);
+      }
+    });
+    listeners.push(unsubBal);
+
+    /* Start blockchain scanner */
+    startPolling();
+
+  } catch (err) {
+    console.error("Deposit init failed:", err);
+    if (container) {
+      container.innerHTML = `
+        <div class="empty-state" style="padding:60px 20px;">
+          <span class="emoji">⚠️</span>
+          <h4 style="color:#fff;margin-bottom:8px;">Deposit Unavailable</h4>
+          <p style="color:var(--text-dim);">${escapeHTML(err.message || "Setup failed")}</p>
+        </div>`;
+    }
+  }
 });
 
-/* Cleanup */
+/* =========================================================
+   17. CLEANUP
+   ========================================================= */
 window.addEventListener("beforeunload", () => {
-  if (balanceTimer) clearInterval(balanceTimer);
+  stopPolling();
+  listeners.forEach(unsub => { try { unsub(); } catch (_) {} });
 });
