@@ -1,15 +1,15 @@
 /* =========================================================
    Nexbit — Deposit Page
    File: deposit.js
-   Version: 4.1 (Pending queue + persistent scan state)
+   Version: 4.2 (RPC-safe chunking + RPC fallback)
 
-   CHANGES in v4.1:
-   - Pending deposits with low confirmations are queued
-   - Last scanned block is persisted in Firebase
-   - Backfill range is configurable
-   - Uses engine.creditIdempotent() — no duplicate credit
-   - Credit failures are recoverable (retried automatically)
-   - Console logs include exact Firebase path + RPC info
+   FIXES in v4.2:
+   - Chunk size reduced to 50 blocks (public RPC limit-safe)
+   - Added bnbchain.org / publicnode.com RPCs (no-auth)
+   - Delay between chunk calls (500ms)
+   - Persistent scan state
+   - Pending queue for low-confirmations
+   - Uses engine.creditIdempotent()
 
    ⚠ Client-side for testing only. Move to Cloud Functions.
    ========================================================= */
@@ -22,7 +22,7 @@ import {
   getDatabase, ref, get, set, update, onValue
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-import engine        from "./engine.js";
+import engine         from "./engine.js";
 import walletRegistry from "./wallet-registry.js";
 
 const firebaseConfig = {
@@ -43,21 +43,24 @@ const db   = getDatabase(app);
 /* =========================================================
    CONFIG
    ========================================================= */
-const CHAIN_ID          = 56;
-const USDT_CONTRACT     = "0x55d398326f99059fF775485246999027B3197955";
-const USDT_DECIMALS     = 18;
-const MIN_CONFIRMATIONS = 3;
-const MIN_DEPOSIT_USDT  = 1;
-const BACKFILL_BLOCKS   = 500;          // on first run
-const MAX_BLOCKS_PER_SCAN = 200;
-const POLL_INTERVAL_MS  = 15_000;
+const CHAIN_ID           = 56;
+const USDT_CONTRACT      = "0x55d398326f99059fF775485246999027B3197955";
+const USDT_DECIMALS      = 18;
+const MIN_CONFIRMATIONS  = 3;
+const MIN_DEPOSIT_USDT   = 1;
+const BACKFILL_BLOCKS    = 500;
+const MAX_BLOCKS_PER_SCAN = 50;      /* ✅ Public RPC limits-safe */
+const DELAY_BETWEEN_CHUNKS = 500;    /* ✅ Respect rate limits */
+const POLL_INTERVAL_MS   = 15_000;
 
+/* ✅ Multiple RPCs — best free ones first */
 const BSC_RPCS = [
+  "https://bsc-dataseed.bnbchain.org",
+  "https://bsc.publicnode.com",
   "https://bsc-dataseed.binance.org/",
-  "https://bsc-dataseed1.defibit.io/",
-  "https://bsc-dataseed1.ninicoin.io/",
-  "https://rpc.ankr.com/bsc"
+  "https://bsc-dataseed1.defibit.io/"
 ];
+
 const BSC_EXPLORER = "https://bscscan.com/";
 
 const TRANSFER_TOPIC =
@@ -66,21 +69,20 @@ const TRANSFER_TOPIC =
 /* =========================================================
    STATE
    ========================================================= */
-let currentUser   = null;
-let userAddress   = null;
-let pollTimer     = null;
+let currentUser      = null;
+let userAddress      = null;
+let pollTimer        = null;
 let lastScannedBlock = null;
-let isPolling     = false;
-const listeners   = [];
-const creditedSet = new Set();
-
-/* Pending queue — deposits detected but not yet confirmed */
-const pendingQueue = new Map();   // key → { log, blockNum, txHash, logIndex }
+let isPolling        = false;
+const listeners      = [];
+const creditedSet    = new Set();
+const pendingQueue   = new Map();
 
 /* =========================================================
    HELPERS
    ========================================================= */
 function getElement(id) { return document.getElementById(id); }
+
 function escapeHTML(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({
     "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
@@ -134,31 +136,40 @@ window.logoutUser = async (e) => {
 };
 
 /* =========================================================
-   RPC
+   RPC — with retry + fallback
    ========================================================= */
-async function rpcCall(method, params) {
+async function rpcCall(method, params, timeoutMs = 10000) {
+  let lastError = "unknown";
+
   for (const rpc of BSC_RPCS) {
     try {
       const resp = await fetch(rpc, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(timeoutMs)
       });
-      if (!resp.ok) continue;
+      if (!resp.ok) { lastError = `HTTP ${resp.status}`; continue; }
       const data = await resp.json();
       if (data && data.result !== undefined) return data.result;
-      if (data && data.error) throw new Error(data.error.message || "RPC error");
+      if (data && data.error) {
+        lastError = data.error.message || "RPC error";
+        console.warn(`[deposit] RPC ${rpc} (${method}): ${lastError}`);
+        continue;
+      }
     } catch (err) {
-      console.warn(`[deposit] RPC ${rpc} failed (${method}):`, err.message);
+      lastError = err.message;
+      console.warn(`[deposit] RPC ${rpc} (${method}) failed: ${lastError}`);
     }
   }
-  throw new Error(`All RPC endpoints failed for ${method}`);
+  throw new Error(`All RPCs failed for ${method}: ${lastError}`);
 }
+
 async function rpcBlockNumber() {
   const hex = await rpcCall("eth_blockNumber", []);
   return parseInt(hex, 16);
 }
+
 async function rpcGetLogs(fromBlock, toBlock, address, topics) {
   return rpcCall("eth_getLogs", [{
     fromBlock: "0x" + fromBlock.toString(16),
@@ -166,6 +177,7 @@ async function rpcGetLogs(fromBlock, toBlock, address, topics) {
     address, topics
   }]);
 }
+
 async function rpcGetTransactionReceipt(txHash) {
   return rpcCall("eth_getTransactionReceipt", [txHash]);
 }
@@ -191,11 +203,10 @@ async function loadScanState(uid) {
   }
   return null;
 }
+
 async function saveScanState(uid, blockNumber) {
   try {
-    await set(ref(db, `depositScanState/${uid}/lastBlock`), {
-      blockNumber
-    });
+    await set(ref(db, `depositScanState/${uid}/lastBlock`), blockNumber);
   } catch (err) {
     console.warn("[deposit] saveScanState failed:", err.message);
   }
@@ -227,8 +238,7 @@ async function markEventDone(key, status) {
 }
 
 /* =========================================================
-   PENDING QUEUE PERSISTENCE (optional but recommended)
-   Path: /users/{uid}/pendingDeposits/{key}
+   PENDING QUEUE
    ========================================================= */
 async function persistPendingDeposit(uid, key, data) {
   try {
@@ -237,19 +247,19 @@ async function persistPendingDeposit(uid, key, data) {
       queuedAt: new Date().toISOString()
     });
   } catch (err) {
-    console.warn("[deposit] persistPendingDeposit failed:", err.message);
+    console.warn("[deposit] persistPending failed:", err.message);
   }
 }
 async function removePendingDeposit(uid, key) {
   try {
     await set(ref(db, `users/${uid}/pendingDeposits/${key}`), null);
   } catch (err) {
-    console.warn("[deposit] removePendingDeposit failed:", err.message);
+    console.warn("[deposit] removePending failed:", err.message);
   }
 }
 
 /* =========================================================
-   SCAN
+   SCAN (chunked, delayed)
    ========================================================= */
 async function scanForDeposits() {
   if (isPolling || !currentUser || !userAddress) return;
@@ -258,14 +268,14 @@ async function scanForDeposits() {
   try {
     const latest = await rpcBlockNumber();
 
-    /* First run of this session: load from Firebase; if absent, backfill */
     if (lastScannedBlock === null) {
       const saved = await loadScanState(currentUser.uid);
-      lastScannedBlock = saved !== null ? saved : Math.max(0, latest - BACKFILL_BLOCKS);
-      console.log(`[deposit] Scan start block: ${lastScannedBlock} (latest: ${latest})`);
+      lastScannedBlock = saved !== null
+        ? saved
+        : Math.max(0, latest - BACKFILL_BLOCKS);
+      console.log(`[deposit] Scan start: ${lastScannedBlock} (latest: ${latest})`);
     }
 
-    /* Process from lastBlock+1 */
     const fromBlock = lastScannedBlock + 1;
     const toBlock   = Math.min(latest, fromBlock + MAX_BLOCKS_PER_SCAN);
 
@@ -275,9 +285,7 @@ async function scanForDeposits() {
       await saveScanState(currentUser.uid, toBlock);
     }
 
-    /* Retry pending (low-confirmation) deposits */
     await retryPendingDeposits();
-
     updateScanStatus(toBlock);
 
   } catch (err) {
@@ -291,28 +299,34 @@ async function scanForDeposits() {
 async function scanRange(fromBlock, toBlock) {
   const paddedTo = "0x" + userAddress.toLowerCase().replace(/^0x/, "").padStart(64, "0");
 
-  let logs;
-  try {
-    logs = await rpcGetLogs(fromBlock, toBlock, USDT_CONTRACT, [
-      TRANSFER_TOPIC,
-      null,
-      paddedTo
-    ]);
-  } catch (err) {
-    console.warn(`[deposit] eth_getLogs ${fromBlock}-${toBlock} failed:`, err.message);
-    return;
-  }
+  /* ✅ Split into 50-block chunks */
+  const CHUNK = 50;
+  let cursor = fromBlock;
 
-  if (!Array.isArray(logs) || logs.length === 0) return;
+  while (cursor <= toBlock) {
+    const chunkEnd = Math.min(toBlock, cursor + CHUNK - 1);
 
-  console.log(`[deposit] Found ${logs.length} transfer(s) in blocks ${fromBlock}-${toBlock}`);
-
-  for (const log of logs) {
     try {
-      await handleIncomingLog(log);
+      const logs = await rpcGetLogs(cursor, chunkEnd, USDT_CONTRACT, [
+        TRANSFER_TOPIC, null, paddedTo
+      ]);
+
+      if (Array.isArray(logs) && logs.length > 0) {
+        console.log(`[deposit] Found ${logs.length} transfer(s) in ${cursor}-${chunkEnd}`);
+        for (const log of logs) {
+          try { await handleIncomingLog(log); }
+          catch (err) { console.warn("[deposit] Log handle error:", err.message); }
+        }
+      }
     } catch (err) {
-      console.warn("[deposit] Log handling error:", err.message);
+      console.warn(`[deposit] Chunk ${cursor}-${chunkEnd} failed:`, err.message);
+      /* Don't advance past failed chunk — retry next scan */
+      return;
     }
+
+    /* ✅ Delay to respect rate limits */
+    await new Promise(r => setTimeout(r, DELAY_BETWEEN_CHUNKS));
+    cursor = chunkEnd + 1;
   }
 }
 
@@ -328,7 +342,6 @@ async function handleIncomingLog(log) {
   if (creditedSet.has(key)) return;
   if (await isEventProcessed(key)) { creditedSet.add(key); return; }
 
-  /* Decode amount */
   const rawAmount = BigInt(log.data);
   const divisor   = 10n ** BigInt(USDT_DECIMALS);
   const whole = rawAmount / divisor;
@@ -337,17 +350,15 @@ async function handleIncomingLog(log) {
   const amount = parseFloat(`${whole}.${fracStr}`);
 
   if (!Number.isFinite(amount) || amount < MIN_DEPOSIT_USDT) {
-    console.log(`[deposit] Below minimum (${amount}), skipping ${txHash}`);
+    console.log(`[deposit] Below minimum (${amount}) — skipping`);
     return;
   }
 
-  /* Confirmations */
   const currentBlock = await rpcBlockNumber();
   const confirmations = Math.max(0, currentBlock - blockNum);
 
   if (confirmations < MIN_CONFIRMATIONS) {
-    /* Queue it, do not lose it */
-    console.log(`[deposit] Queuing pending ${txHash} (${confirmations}/${MIN_CONFIRMATIONS})`);
+    console.log(`[deposit] Queuing ${txHash} (${confirmations}/${MIN_CONFIRMATIONS})`);
     const pendingData = {
       txHash, logIndex, blockNumber: blockNum,
       amount, amountRaw: rawAmount.toString(),
@@ -374,44 +385,43 @@ async function retryPendingDeposits() {
       const confirmations = Math.max(0, currentBlock - p.blockNumber);
 
       if (confirmations >= MIN_CONFIRMATIONS) {
-        await finalizeDeposit(
-          { transactionHash: p.txHash, logIndex: "0x" + p.logIndex.toString(16),
-            blockNumber: "0x" + p.blockNumber.toString(16),
-            data: "0x" + BigInt(p.amountRaw).toString(16),
-            topics: [] },
-          key, p.amount, p.blockNumber, confirmations
-        );
+        const fakeLog = {
+          transactionHash: p.txHash,
+          logIndex: "0x" + p.logIndex.toString(16),
+          blockNumber: "0x" + p.blockNumber.toString(16),
+          data: "0x" + BigInt(p.amountRaw).toString(16),
+          topics: [TRANSFER_TOPIC]
+        };
+        await finalizeDeposit(fakeLog, key, p.amount, p.blockNumber, confirmations);
         pendingQueue.delete(key);
         await removePendingDeposit(currentUser.uid, key);
       }
     } catch (err) {
-      console.warn(`[deposit] Pending retry failed for ${p.txHash}:`, err.message);
+      console.warn(`[deposit] Pending retry failed:`, err.message);
     }
   }
 }
 
 /* =========================================================
-   FINALIZE (verify + credit)
+   FINALIZE
    ========================================================= */
 async function finalizeDeposit(log, key, amount, blockNum, confirmations) {
-  /* Confirm receipt succeeded */
   let receipt;
   try {
     receipt = await rpcGetTransactionReceipt(log.transactionHash);
   } catch (err) {
-    console.warn(`[deposit] Receipt fetch failed for ${log.transactionHash}:`, err.message);
+    console.warn(`[deposit] Receipt failed:`, err.message);
     return;
   }
   if (!receipt || receipt.status !== "0x1") {
-    console.warn(`[deposit] Tx failed or missing: ${log.transactionHash}`);
+    console.warn(`[deposit] Tx failed: ${log.transactionHash}`);
     return;
   }
 
-  /* Mark as processing */
   try {
     await markEventProcessing(key, {
       txHash: log.transactionHash,
-      logIndex: log.logIndex,
+      logIndex: parseInt(log.logIndex, 16),
       blockNumber: blockNum,
       chainId: CHAIN_ID,
       tokenContract: USDT_CONTRACT,
@@ -419,11 +429,8 @@ async function finalizeDeposit(log, key, amount, blockNum, confirmations) {
       amountRaw: log.data,
       amount, uid: currentUser.uid
     });
-  } catch (err) {
-    console.warn("[deposit] markEventProcessing failed:", err.message);
-  }
+  } catch (err) { console.warn("[deposit] markProcessing failed:", err.message); }
 
-  /* Save deposit record (idempotent — write once) */
   const depositId = `dep_${blockNum}_${log.transactionHash.slice(2, 10)}_${parseInt(log.logIndex, 16)}`;
 
   try {
@@ -435,14 +442,11 @@ async function finalizeDeposit(log, key, amount, blockNum, confirmations) {
       tokenContract: USDT_CONTRACT,
       toAddress: userAddress,
       amountRaw: log.data,
-      amount,
-      blockNumber: blockNum,
-      confirmations,
+      amount, blockNumber: blockNum, confirmations,
       status: "confirmed",
       detectedAt: new Date().toISOString(),
       confirmedAt: new Date().toISOString()
     });
-
     await set(ref(db, `users/${currentUser.uid}/deposits/${depositId}`), {
       txHash: log.transactionHash,
       logIndex: parseInt(log.logIndex, 16),
@@ -451,18 +455,15 @@ async function finalizeDeposit(log, key, amount, blockNum, confirmations) {
       status: "confirmed",
       createdAt: new Date().toISOString()
     });
-
     await set(ref(db, `users/${currentUser.uid}/transactions/${depositId}`), {
       type: "deposit", asset: "USDT", amount,
       txHash: log.transactionHash, blockNumber: blockNum,
       status: "success", timestamp: Date.now()
     });
-  } catch (err) {
-    console.warn("[deposit] Record save failed:", err.message);
-  }
+  } catch (err) { console.warn("[deposit] Record save failed:", err.message); }
 
-  /* Credit — idempotent via reference */
   const reference = `deposit_${log.transactionHash}_${parseInt(log.logIndex, 16)}`;
+
   try {
     const result = await engine.creditIdempotent(
       currentUser.uid, "USDT", amount, reference,
@@ -480,16 +481,14 @@ async function finalizeDeposit(log, key, amount, blockNum, confirmations) {
     refreshDepositsList();
 
   } catch (err) {
-    console.error(`[deposit] Credit failed for ${log.transactionHash}:`, err.message);
+    console.error(`[deposit] Credit failed:`, err.message);
     await markEventDone(key, "failed");
     updateStatus("failed", { amount, txHash: log.transactionHash, error: err.message });
     showToast(`Credit failed: ${err.message}`, "error", 8000);
-    /* Keep in pending queue for retry */
     pendingQueue.set(key, {
       txHash: log.transactionHash,
       logIndex: parseInt(log.logIndex, 16),
-      blockNumber: blockNum,
-      amount,
+      blockNumber: blockNum, amount,
       amountRaw: log.data,
       detectedAt: new Date().toISOString(),
       lastError: err.message
@@ -598,7 +597,7 @@ function stopPolling() {
 }
 
 /* =========================================================
-   RENDER PAGE (same as before)
+   RENDER PAGE
    ========================================================= */
 function renderDepositUI(balance, address) {
   const container = getElement("depositContent");
@@ -620,7 +619,6 @@ function renderDepositUI(balance, address) {
 
     <div class="deposit-card">
       <div class="card-title"><span class="ico">📥</span> Your Unique Deposit Address</div>
-
       <div class="qr-address-grid">
         <div class="qr-box"><img src="${qrUrl}" alt="Deposit QR" /></div>
         <div class="address-block">
@@ -739,7 +737,6 @@ onAuthStateChanged(auth, async (user) => {
     });
     listeners.push(unsub);
 
-    /* Load any pending queue from Firebase */
     try {
       const pendingSnap = await get(ref(db, `users/${user.uid}/pendingDeposits`));
       if (pendingSnap.exists()) {
