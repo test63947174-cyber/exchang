@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Deposit — Nexbit</title>
+  <title>Deposit USDT — Nexbit</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -110,17 +110,13 @@
       box-shadow: 0 0 34px rgba(0,255,163,0.6);
       transform: translateY(-2px);
     }
-    .btn-primary:disabled {
-      opacity: 0.6; cursor: not-allowed;
-      transform: none !important;
-    }
 
     /* ============ SIDEBAR ============ */
     .sidebar {
       position: fixed; top: 0; left: 0; bottom: 0;
       width: 290px; max-width: 85vw;
       background: rgba(6,10,26,0.97);
-      backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+      backdrop-filter: blur(22px);
       border-right: 1px solid rgba(0,240,255,0.15);
       padding: 22px 0 20px;
       transform: translateX(-100%);
@@ -174,19 +170,10 @@
       background: linear-gradient(90deg, transparent, rgba(0,240,255,0.25), transparent);
       margin: 12px 8px;
     }
-    .sidebar-footer { padding: 16px 16px 0; }
-    .help-card {
-      background: linear-gradient(135deg, rgba(0,240,255,0.08), rgba(123,92,255,0.08));
-      border: 1px solid rgba(0,240,255,0.2);
-      border-radius: 14px; padding: 16px; text-align: center;
-    }
-    .help-card h5 { font-family: 'Orbitron', sans-serif; font-size: 0.9rem; font-weight: 700; margin-bottom: 4px; }
-    .help-card p { font-size: 0.75rem; color: var(--text-dim); margin-bottom: 10px; }
-    .help-card a { color: var(--neon-cyan); font-size: 0.8rem; font-weight: 600; text-decoration: none; }
     .sidebar-overlay {
       position: fixed; inset: 0;
       background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      backdrop-filter: blur(4px);
       opacity: 0; pointer-events: none;
       transition: opacity 0.3s; z-index: 250;
     }
@@ -212,13 +199,13 @@
 
     /* ============ BALANCE CARD ============ */
     .balance-card {
+      position: relative;
       background: linear-gradient(135deg, rgba(0,240,255,0.12), rgba(123,92,255,0.12));
       backdrop-filter: blur(20px);
       border: 1px solid rgba(0,240,255,0.35);
       border-radius: 20px;
       padding: 24px 26px;
       margin-bottom: 24px;
-      position: relative;
       overflow: hidden;
     }
     .balance-card::before {
@@ -256,10 +243,10 @@
       backdrop-filter: blur(18px);
       border: 1px solid rgba(0,240,255,0.2);
       border-radius: 22px;
-      padding: 30px;
+      padding: 28px;
       position: relative;
       overflow: hidden;
-      margin-bottom: 24px;
+      margin-bottom: 22px;
     }
     .deposit-card::before {
       content: ""; position: absolute;
@@ -272,18 +259,16 @@
       display: flex; align-items: center; gap: 10px;
       font-family: 'Orbitron', sans-serif;
       font-size: 1rem; font-weight: 700;
-      margin-bottom: 20px; letter-spacing: 0.5px;
-      color: var(--text-main);
+      margin-bottom: 18px; letter-spacing: 0.5px;
     }
     .card-title .ico { font-size: 1.15rem; }
 
-    /* QR + Address */
+    /* ============ QR + ADDRESS ============ */
     .qr-address-grid {
       display: grid;
       grid-template-columns: 200px 1fr;
       gap: 24px;
       align-items: start;
-      margin-bottom: 20px;
       position: relative;
     }
     .qr-box {
@@ -301,6 +286,15 @@
       height: 100% !important;
       border-radius: 6px;
     }
+    .qr-box.loading {
+      background: rgba(0,240,255,0.05);
+      border: 1px dashed rgba(0,240,255,0.3);
+      color: var(--text-dim);
+      font-size: 0.75rem;
+      text-align: center;
+      padding: 20px;
+    }
+
     .address-block {}
     .address-label {
       font-size: 0.72rem;
@@ -321,6 +315,11 @@
       color: var(--neon-cyan);
       margin-bottom: 10px;
       line-height: 1.5;
+      min-height: 44px;
+    }
+    .address-value.loading {
+      color: var(--text-dim);
+      font-style: italic;
     }
     .address-actions {
       display: flex; gap: 8px; flex-wrap: wrap;
@@ -329,11 +328,20 @@
       padding: 9px 16px;
       font-size: 0.78rem;
     }
+
+    /* Address note */
     .address-note {
-      font-size: 0.72rem; color: var(--text-dim);
-      margin-top: 10px; line-height: 1.6;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: rgba(255,189,46,0.06);
+      border: 1px solid rgba(255,189,46,0.25);
+      border-left: 3px solid var(--warning);
+      border-radius: 10px;
+      line-height: 1.7;
     }
-    .address-note strong { color: var(--text-main); }
+    .address-note strong { color: var(--warning); }
     .contract {
       font-family: 'Courier New', monospace;
       color: var(--neon-cyan);
@@ -341,98 +349,50 @@
       word-break: break-all;
     }
 
-    /* ============ VERIFY FORM ============ */
-    .verify-form { margin-top: 24px; }
-    .verify-grid {
-      display: grid;
-      grid-template-columns: 1fr 1.5fr auto;
-      gap: 12px;
-      align-items: start;
-    }
-    .form-group { display: flex; flex-direction: column; }
-    .form-label {
-      font-size: 0.75rem; font-weight: 600;
-      letter-spacing: 0.5px;
-      color: var(--text-dim);
-      margin-bottom: 6px;
-      text-transform: uppercase;
-    }
-    .form-label .req { color: var(--danger); }
-    .form-control {
-      width: 100%;
-      padding: 12px 14px;
-      background: rgba(5,10,25,0.75);
-      border: 1px solid rgba(0,240,255,0.18);
-      border-radius: 11px;
-      color: var(--text-main);
-      font-size: 0.88rem;
-      font-family: inherit;
-      outline: none;
-      transition: all 0.25s;
-    }
-    .form-control:focus {
-      border-color: var(--neon-cyan);
-      box-shadow: 0 0 0 3px rgba(0,240,255,0.12);
-      background: rgba(5,10,25,0.95);
-    }
-    .form-control::placeholder { color: #4a5a7d; }
-    .form-hint {
-      font-size: 0.68rem;
-      color: var(--text-dim);
-      margin-top: 5px;
-    }
-    .verify-btn-wrap { padding-top: 26px; }
-
-    /* Verification status */
-    .verification-status {
-      padding: 14px 16px;
+    /* ============ STATUS PANEL ============ */
+    .status-panel {
+      margin-top: 20px;
+      padding: 16px 18px;
+      background: rgba(0,240,255,0.04);
+      border: 1px solid rgba(0,240,255,0.15);
       border-radius: 12px;
-      margin-top: 16px;
-      display: none;
-      font-size: 0.85rem;
-      line-height: 1.6;
     }
-    .verification-status.show { display: block; animation: fadeIn 0.3s ease; }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(-4px); }
-      to   { opacity: 1; transform: translateY(0); }
-    }
-    .verification-status.pending { background: rgba(255,189,46,0.08); border: 1px solid rgba(255,189,46,0.28); color: var(--warning); }
-    .verification-status.success { background: rgba(0,255,163,0.08); border: 1px solid rgba(0,255,163,0.3); color: var(--neon-green); }
-    .verification-status.error   { background: rgba(255,77,109,0.08); border: 1px solid rgba(255,77,109,0.3); color: var(--danger); }
-    .verification-status.polling { background: rgba(0,240,255,0.08); border: 1px solid rgba(0,240,255,0.28); color: var(--neon-cyan); }
-    .polling-indicator {
-      display: inline-block;
-      width: 12px; height: 12px;
-      border-radius: 50%;
-      background: var(--neon-cyan);
-      animation: pulse 1.5s ease-in-out infinite;
-      margin-right: 8px;
-      vertical-align: middle;
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%      { opacity: 0.5; transform: scale(0.8); }
-    }
-    .auto-fill-btn {
-      background: rgba(0,240,255,0.1);
-      border: 1px solid rgba(0,240,255,0.3);
-      color: var(--neon-cyan);
-      padding: 8px 14px;
-      border-radius: 8px;
-      font-size: 0.78rem;
+    .status-panel-title {
+      font-size: 0.72rem;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
       font-weight: 600;
-      cursor: pointer;
-      font-family: inherit;
-      margin-top: 8px;
-      transition: all 0.25s;
     }
-    .auto-fill-btn:hover {
-      background: rgba(0,240,255,0.2);
-      box-shadow: 0 0 18px rgba(0,240,255,0.3);
+    .status-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 0;
+      font-size: 0.82rem;
+    }
+    .status-row + .status-row { border-top: 1px dashed rgba(0,240,255,0.08); }
+    .status-label { color: var(--text-dim); }
+    .status-value {
+      font-weight: 600;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .status-value.waiting   { color: var(--text-dim); }
+    .status-value.detected  { color: var(--warning); }
+    .status-value.confirming{ color: var(--neon-cyan); }
+    .status-value.credited  { color: var(--neon-green); }
+    .status-value.failed    { color: var(--danger); }
+    .pulse-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse-dot 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%,100% { opacity: 1; transform: scale(1); }
+      50%     { opacity: 0.4; transform: scale(0.85); }
     }
 
-    /* ============ INFO ALERT ============ */
+    /* Info alert */
     .info-alert {
       background: rgba(0,240,255,0.05);
       border: 1px solid rgba(0,240,255,0.18);
@@ -440,12 +400,12 @@
       border-radius: 12px;
       padding: 14px 16px;
       font-size: 0.82rem;
-      line-height: 1.65;
-      margin-bottom: 20px;
+      line-height: 1.7;
+      margin-bottom: 18px;
       color: var(--text-main);
     }
     .info-alert strong { color: var(--neon-cyan); }
-    .info-alert .x { color: var(--danger); font-weight: 700; }
+    .info-alert .no { color: var(--danger); font-weight: 700; }
 
     /* ============ RECENT DEPOSITS ============ */
     .deposit-item {
@@ -473,15 +433,22 @@
       font-size: 0.7rem;
       margin-top: 3px;
     }
-    .deposit-item .status {
+    .deposit-item .badge-verified {
       color: var(--neon-green);
-      font-size: 0.78rem;
+      font-size: 0.75rem;
       font-weight: 600;
       display: inline-flex;
       align-items: center;
       gap: 4px;
     }
-    .badges {
+    .deposit-item .tx-link {
+      font-size: 0.7rem;
+      font-family: 'Courier New', monospace;
+      color: var(--neon-cyan);
+      text-decoration: none;
+    }
+    .deposit-item .tx-link:hover { text-decoration: underline; }
+    .deposit-item .badges {
       display: flex; flex-wrap: wrap; gap: 6px;
       margin-top: 6px; justify-content: flex-end;
     }
@@ -492,7 +459,6 @@
       font-weight: 600;
     }
     .badge-block { background: rgba(0,255,163,0.1); color: var(--neon-green); }
-    .badge-hash { background: rgba(123,92,255,0.15); color: var(--neon-purple); font-family: 'Courier New', monospace; }
 
     .empty-state {
       text-align: center;
@@ -504,19 +470,42 @@
 
     .loading-box {
       text-align: center;
-      padding: 50px 20px;
+      padding: 40px 20px;
       color: var(--text-dim);
     }
     .spinner {
       display: inline-block;
-      width: 34px; height: 34px;
+      width: 30px; height: 30px;
       border-radius: 50%;
       border: 3px solid rgba(0,240,255,0.2);
       border-top-color: var(--neon-cyan);
       animation: spin 0.8s linear infinite;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ============ WARNING BOX ============ */
+    .warning-box {
+      margin-top: 20px;
+      padding: 14px 18px;
+      background: rgba(255,77,109,0.06);
+      border: 1px solid rgba(255,77,109,0.3);
+      border-left: 4px solid var(--danger);
+      border-radius: 12px;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+    .warning-box .icon { font-size: 1.4rem; flex-shrink: 0; line-height: 1.2; }
+    .warning-box strong { color: var(--danger); }
+    .warning-box ul {
+      margin: 6px 0 0 18px;
+      line-height: 1.8;
+      color: var(--text-dim);
+    }
+    .warning-box li { margin-bottom: 3px; }
 
     /* ============ TOAST ============ */
     .toast-container {
@@ -560,9 +549,7 @@
       }
       .qr-box { width: 180px; height: 180px; }
       .address-actions { justify-content: center; }
-      .verify-grid { grid-template-columns: 1fr; }
-      .verify-btn-wrap { padding-top: 0; }
-      .verify-btn-wrap .btn { width: 100%; }
+      .toast-container { top: 12px; right: 12px; left: 12px; max-width: none; }
     }
     @media (max-width: 480px) {
       .qr-box { width: 160px; height: 160px; }
@@ -621,14 +608,6 @@
     <div class="menu-divider"></div>
     <a href="#" class="menu-item" onclick="logoutUser(event)"><span class="mi-icon">🚪</span> Logout</a>
   </nav>
-  <div class="sidebar-footer">
-    <div class="help-card">
-      <div style="font-size:1.5rem; margin-bottom:6px;">🎧</div>
-      <h5>Need help?</h5>
-      <p>Our support team is online 24/7</p>
-      <a href="#">Contact Support</a>
-    </div>
-  </div>
 </aside>
 <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
 
@@ -642,5 +621,6 @@
 
 <!-- ================= SCRIPT ================= -->
 <script type="module" src="deposit.js"></script>
+
 </body>
 </html>
